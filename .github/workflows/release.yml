@@ -25,8 +25,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci --production
-          npm install cross-env webpack webpack-cli --save-dev
+          npm ci --omit=dev --legacy-peer-deps
+          npm install cross-env webpack webpack-cli --legacy-peer-deps
 
       - name: Build client assets
         run: npm run build
