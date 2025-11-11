@@ -81,22 +81,22 @@ jobs:
       - name: Clean unnecessary files
         run: |
           cd release-build
-
+          
           # Удаляем dev зависимости из node_modules (опционально)
           # npm prune --production
-
+          
           # Удаляем ненужные файлы
-          find . -name "*.md5" -delete
-          find . -name "*.map" -delete
-          find . -name ".DS_Store" -delete
-          find . -name "Thumbs.db" -delete
-
-          # Удаляем тестовые файлы
-          find . -type d -name "__tests__" -exec rm -rf {} + 2>/dev/null || true
-          find . -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
-          find . -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
-          find . -name "*.test.js" -delete 2>/dev/null || true
-          find . -name "*.spec.js" -delete 2>/dev/null || true
+          find . -name "*.md5" -type f -delete || true
+          find . -name "*.map" -type f -delete || true
+          find . -name ".DS_Store" -type f -delete || true
+          find . -name "Thumbs.db" -type f -delete || true
+          
+          # Удаляем тестовые файлы (используем -prune для предотвращения ошибок)
+          find . -type d -name "__tests__" -prune -exec rm -rf {} \; 2>/dev/null || true
+          find . -type d -name "test" -prune -exec rm -rf {} \; 2>/dev/null || true
+          find . -type d -name "tests" -prune -exec rm -rf {} \; 2>/dev/null || true
+          find . -name "*.test.js" -type f -delete 2>/dev/null || true
+          find . -name "*.spec.js" -type f -delete 2>/dev/null || true
 
       - name: Get version from tag
         id: version
