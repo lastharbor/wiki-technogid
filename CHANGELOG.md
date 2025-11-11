@@ -97,11 +97,36 @@
 - ✅ Fixed trailing spaces in Git storage module
 - ✅ Fixed missing "Close" button in editor header
 
+### 📝 Frontmatter Support
+
+**Full YAML frontmatter support for Markdown and HTML**
+- ✅ Automatic frontmatter injection when exporting to Git
+- ✅ Automatic parsing when importing from Git
+- ✅ Supports all metadata fields (title, description, tags, published, dates)
+- ✅ Works seamlessly with Git Storage module
+- ✅ Error handling with graceful fallback
+
+**Supported fields:**
+- `title` - Page title
+- `description` - Page description
+- `published` - Publication status (boolean)
+- `date` - Update date (ISO 8601)
+- `tags` - Tags (comma-separated string or array)
+- `editor` - Editor type (markdown/html)
+- `dateCreated` - Creation date (ISO 8601)
+
+**Files:**
+- `server/models/pages.js` - `extractFrontmatter()` and `parseMetadata()` methods
+- `server/helpers/page.js` - `injectPageMetadata()` method
+- `server/modules/storage/disk/common.js` - Uses `parseMetadata()` for imports
+- `FRONTMATTER_SUPPORT.md` - Complete documentation
+
 ### 📚 Documentation
 
 **Added comprehensive docs**
 - `GIT_STORAGE_FIXES.md` - Detailed Git storage fix documentation
 - `test-git-nested-folders.md` - Testing guide
+- `FRONTMATTER_SUPPORT.md` - Frontmatter usage guide
 - `CHANGELOG.md` - This file
 
 ## Installation
