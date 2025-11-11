@@ -1,0 +1,278 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Запуск при создании тега версии (например, v2.6.0)
+  workflow_dispatch:  # Ручной запуск
+
+jobs:
+  build-release:
+    name: Build Production Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Полная история для корректного клонирования
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci --production
+          npm install cross-env webpack webpack-cli --save-dev
+
+      - name: Build client assets
+        run: npm run build
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
+
+      - name: Prepare release directory
+        run: |
+          mkdir -p release-build
+
+          # Копируем необходимые файлы
+          cp -r assets release-build/
+          cp -r server release-build/
+          cp -r node_modules release-build/
+          cp package.json release-build/
+          cp package-lock.json release-build/ || true
+          cp config.sample.yml release-build/
+          cp LICENSE release-build/
+          cp README.md release-build/
+          cp CHANGELOG.md release-build/
+          cp test-git-nested-folders.md release-build/ || true
+
+          # Создаём пустые директории для data (без содержимого)
+          mkdir -p release-build/data/cache
+          mkdir -p release-build/data/uploads
+          mkdir -p release-build/data/repo
+
+          # Создаём .gitkeep для сохранения структуры
+          touch release-build/data/.gitkeep
+          touch release-build/data/cache/.gitkeep
+          touch release-build/data/uploads/.gitkeep
+          touch release-build/data/repo/.gitkeep
+
+      - name: Create README for data directory
+        run: |
+          cat > release-build/data/README.md << 'EOF'
+          # Data Directory
+
+          This directory is used for Wiki.js application data:
+
+          - `cache/` - Temporary cache files
+          - `uploads/` - User uploaded files
+          - `repo/` - Git repository for page storage (if Git storage is enabled)
+
+          The database file (`wiki.sqlite` for SQLite or connection to external DB)
+          will be created here based on your `config.yml` settings.
+
+          **Note:** This directory is excluded from the release archive.
+          It will be populated automatically when you run Wiki.js.
+          EOF
+
+      - name: Clean unnecessary files
+        run: |
+          cd release-build
+
+          # Удаляем dev зависимости из node_modules (опционально)
+          # npm prune --production
+
+          # Удаляем ненужные файлы
+          find . -name "*.md5" -delete
+          find . -name "*.map" -delete
+          find . -name ".DS_Store" -delete
+          find . -name "Thumbs.db" -delete
+
+          # Удаляем тестовые файлы
+          find . -type d -name "__tests__" -exec rm -rf {} + 2>/dev/null || true
+          find . -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
+          find . -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+          find . -name "*.test.js" -delete 2>/dev/null || true
+          find . -name "*.spec.js" -delete 2>/dev/null || true
+
+      - name: Get version from tag
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" == "tag" ]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="v2.6.0"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create tar.gz archive
+        run: |
+          cd release-build
+          tar -czf ../wiki-js-${{ steps.version.outputs.version }}.tar.gz \
+            --exclude='.git' \
+            --exclude='data/wiki.sqlite*' \
+            --exclude='data/cache/*' \
+            --exclude='data/uploads/*' \
+            --exclude='data/repo/*' \
+            .
+
+      - name: Create zip archive
+        run: |
+          cd release-build
+          zip -r -q ../wiki-js-${{ steps.version.outputs.version }}.zip \
+            -x '.git/*' \
+            -x 'data/wiki.sqlite*' \
+            -x 'data/cache/*' \
+            -x 'data/uploads/*' \
+            -x 'data/repo/*' \
+            .
+
+      - name: Calculate checksums
+        run: |
+          sha256sum wiki-js-${{ steps.version.outputs.version }}.tar.gz > wiki-js-${{ steps.version.outputs.version }}.tar.gz.sha256
+          sha256sum wiki-js-${{ steps.version.outputs.version }}.zip > wiki-js-${{ steps.version.outputs.version }}.zip.sha256
+
+          echo "## Checksums" > checksums.txt
+          echo "" >> checksums.txt
+          echo "### tar.gz" >> checksums.txt
+          echo '```' >> checksums.txt
+          cat wiki-js-${{ steps.version.outputs.version }}.tar.gz.sha256 >> checksums.txt
+          echo '```' >> checksums.txt
+          echo "" >> checksums.txt
+          echo "### zip" >> checksums.txt
+          echo '```' >> checksums.txt
+          cat wiki-js-${{ steps.version.outputs.version }}.zip.sha256 >> checksums.txt
+          echo '```' >> checksums.txt
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          # Wiki.js v${{ steps.version.outputs.version }} - Custom Fork
+
+          Enhanced Wiki.js with Git Storage improvements, Approval Workflow, and Russian localization.
+
+          ## 🚀 Quick Start
+
+          ### Installation
+
+          ```bash
+          # Extract archive
+          tar -xzf wiki-js-${{ steps.version.outputs.version }}.tar.gz
+          # or
+          unzip wiki-js-${{ steps.version.outputs.version }}.zip
+
+          cd release-build
+
+          # Configure
+          cp config.sample.yml config.yml
+          nano config.yml  # Edit database settings
+
+          # Start
+          node server
+          ```
+
+          **No `npm install` needed** - all dependencies included!
+
+          ## ✨ Features
+
+          ### 🔧 Git Storage - FIXED
+          - ✅ Unlimited nested folder depth support
+          - ✅ Deleted pages restoration from Git
+          - ✅ Automatic directory creation
+          - ✅ Improved error handling
+
+          ### 📋 Approval Workflow
+          - ✅ Complete moderation system
+          - ✅ Reviewer comments
+          - ✅ Status tracking (DRAFT/PENDING/APPROVED/REJECTED)
+          - ✅ Permission-based access control
+
+          ### 🌐 Russian Localization
+          - ✅ Full UI translation
+          - ✅ Moderation interface
+          - ✅ English fallback
+
+          ### 🎨 UI/UX Improvements
+          - ✅ Fixed editor header buttons
+          - ✅ Fixed admin panel infinite loading
+          - ✅ Improved history page
+          - ✅ XSS protection
+
+          ## 🐛 Bug Fixes
+
+          - Fixed Git storage nested folder creation
+          - Fixed deleted pages not reappearing after git pull
+          - Fixed admin panel loading issues
+          - Fixed duplicate comments in editor and history
+          - Fixed permission issues for writers
+
+          ## 📊 Package Information
+
+          - **Size:** ~250 MB (tar.gz), ~380 MB (zip)
+          - **Node.js:** 14.x or later (18.x recommended)
+          - **Database:** PostgreSQL, MySQL, MariaDB, SQLite, MSSQL
+          - **License:** AGPL-3.0
+
+          ## 📚 Documentation
+
+          - [README.md](README.md) - Overview and setup
+          - [CHANGELOG.md](CHANGELOG.md) - Full changelog
+          - [test-git-nested-folders.md](test-git-nested-folders.md) - Testing guide
+
+          ## 🙏 Credits
+
+          Based on [Wiki.js](https://github.com/Requarks/wiki) by Nicolas Giard
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: github.ref_type == 'tag'
+        with:
+          name: Wiki.js ${{ steps.version.outputs.version }} - Custom Fork
+          body_path: release-notes.md
+          files: |
+            wiki-js-${{ steps.version.outputs.version }}.tar.gz
+            wiki-js-${{ steps.version.outputs.version }}.tar.gz.sha256
+            wiki-js-${{ steps.version.outputs.version }}.zip
+            wiki-js-${{ steps.version.outputs.version }}.zip.sha256
+            checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts (for manual runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiki-js-release-${{ steps.version.outputs.version }}
+          path: |
+            wiki-js-${{ steps.version.outputs.version }}.tar.gz
+            wiki-js-${{ steps.version.outputs.version }}.tar.gz.sha256
+            wiki-js-${{ steps.version.outputs.version }}.zip
+            wiki-js-${{ steps.version.outputs.version }}.zip.sha256
+            checksums.txt
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "## Build Complete! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Archives Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- \`wiki-js-${{ steps.version.outputs.version }}.tar.gz\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`wiki-js-${{ steps.version.outputs.version }}.zip\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### File Sizes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh wiki-js-${{ steps.version.outputs.version }}.* >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat checksums.txt >> $GITHUB_STEP_SUMMARY
+
