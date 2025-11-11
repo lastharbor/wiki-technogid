@@ -6,6 +6,9 @@ on:
       - 'v*.*.*'  # Запуск при создании тега версии (например, v2.6.0)
   workflow_dispatch:  # Ручной запуск
 
+permissions:
+  contents: write  # требуется для создания релиза и загрузки ассетов
+
 jobs:
   build-release:
     name: Build Production Release
@@ -226,6 +229,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         if: github.ref_type == 'tag'
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           name: Wiki.js ${{ steps.version.outputs.version }} - Custom Fork
           body_path: release-notes.md
           files: |
@@ -236,8 +240,6 @@ jobs:
             checksums.txt
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts (for manual runs)
         if: github.ref_type != 'tag'
