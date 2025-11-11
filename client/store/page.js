@@ -16,8 +16,12 @@ const state = {
   updatedAt: '',
   editor: '',
   mode: '',
+  origin: '',
   scriptJs: '',
   scriptCss: '',
+  approvalStatus: 'APPROVED',
+  approvalComment: '',
+  pendingVersionId: null,
   effectivePermissions: {
     comments: {
       read: false,
@@ -33,6 +37,8 @@ const state = {
     pages: {
       write: false,
       manage: false,
+      approve: false,
+      publish: false,
       delete: false,
       script: false,
       style: false

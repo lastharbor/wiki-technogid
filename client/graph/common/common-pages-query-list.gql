@@ -9,6 +9,7 @@ query ($limit: Int, $orderBy: PageOrderBy, $orderByDirection: PageOrderByDirecti
       createdAt
       updatedAt
       tags
+      approvalStatus
     }
   }
 }

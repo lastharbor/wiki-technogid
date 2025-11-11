@@ -162,7 +162,9 @@ module.exports = {
             await this.sftp.mkdir(folderDir)
           }
         }
-      } catch (err) {}
+      } catch (err) {
+        WIKI.logger.warn(`(STORAGE/SFTP) Failed to ensure directory structure for ${filePath}:`, err.message)
+      }
     }
   }
 }

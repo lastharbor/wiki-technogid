@@ -1,0 +1,51 @@
+query ($id: Int!) {
+  pages {
+    approvalDetail(id: $id) {
+      id
+      locale
+      path
+      approvalStatus
+      approvalComment
+      isPublished
+      currentTitle
+      currentDescription
+      currentUpdatedAt
+      liveVersion {
+        title
+        description
+        content
+        contentType
+        editor
+        tags
+        render
+        publishStartDate
+        publishEndDate
+        createdAt
+        author {
+          id
+          name
+          email
+        }
+      }
+      pendingVersion {
+        versionId
+        title
+        description
+        content
+        contentType
+        editor
+        tags
+        render
+        publishStartDate
+        publishEndDate
+        createdAt
+        author {
+          id
+          name
+          email
+        }
+      }
+    }
+  }
+}
+

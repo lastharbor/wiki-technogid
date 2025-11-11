@@ -16,7 +16,7 @@ module.exports = {
       passReqToCallback: true
     }, async (req, accessToken, refreshToken, profile, cb) => {
       try {
-        if (conf.hostedDomain && conf.hostedDomain != profile._json.hd) {
+        if (conf.hostedDomain && conf.hostedDomain !== profile._json.hd) {
           throw new Error('Google authentication should have been performed with domain ' + conf.hostedDomain)
         }
         const user = await WIKI.models.users.processProfile({

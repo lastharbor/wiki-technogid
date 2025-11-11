@@ -24,6 +24,10 @@
           v-toolbar(color='grey darken-3', dark, dense, flat)
             .body-2 {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
+            v-btn(icon, tile, v-if='canManageFolders', @click='openNewFolderDialog', :aria-label="$t('common:actions.create')")
+              v-icon mdi-folder-plus
+            v-btn(icon, tile, v-if='canManageFolders && currentFolderPath', @click='promptDeleteFolder', :aria-label="$t('common:actions.delete')")
+              v-icon mdi-folder-remove
             v-btn(icon, tile, href='https://docs.requarks.io/guide/pages#folders', target='_blank')
               v-icon mdi-help-box
           div(style='height:400px;')
@@ -97,17 +101,50 @@
         v-btn.px-4(color='primary', @click='open', :disabled='!isValidPath')
           v-icon(left) mdi-check
           span {{$t('common:actions.select')}}
+    v-dialog(v-model='newFolderDialog', max-width='420')
+      v-card.page-selector-new-folder
+        .dialog-header.is-blue
+          v-icon.mr-2(color='white') mdi-folder-plus
+          span.white--text {{$t('editor:assets.newFolder')}}
+        v-card-text.pb-0.pt-6.px-6
+          v-text-field(
+            outlined
+            autofocus
+            :label='$t(`editor:assets.folderName`)'
+            v-model='newFolderName'
+            :disabled='newFolderLoading'
+          )
+        v-card-chin
+          v-spacer
+          v-btn(text, @click='newFolderDialog = false', :disabled='newFolderLoading') {{$t('common:actions.cancel')}}
+          v-btn(color='primary', :loading='newFolderLoading', @click='createFolderConfirm').white--text {{$t('common:actions.create')}}
+    v-dialog(v-model='deleteFolderDialog', max-width='420')
+      v-card
+        .dialog-header.is-red
+          v-icon.mr-2(color='white') mdi-folder-remove
+          span.white--text Delete Folder
+        v-card-text.pt-5
+          .body-2.grey--text.text--darken-2 Are you sure you want to delete this folder?
+          .caption.grey--text {{ currentFolderPath }}
+        v-card-chin
+          v-spacer
+          v-btn(text, @click='deleteFolderDialog = false') {{$t('common:actions.cancel')}}
+          v-btn(color='red darken-2', dark, @click='deleteFolderConfirm') {{$t('common:actions.delete')}}
 </template>
 
 <script>
 import _ from 'lodash'
 import gql from 'graphql-tag'
 
+import createFolderMutation from 'gql/admin/pages/pages-mutation-folder-create.gql'
+import deleteFolderMutation from 'gql/admin/pages/pages-mutation-folder-delete.gql'
+
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 
 /* global siteLangs, siteConfig */
 
 export default {
+  i18nOptions: { namespaces: ['common', 'editor'] },
   props: {
     value: {
       type: Boolean,
@@ -139,7 +176,6 @@ export default {
       treeViewCacheId: 0,
       searchLoading: false,
       currentLocale: siteConfig.lang,
-      currentFolderPath: '',
       currentPath: 'new-page',
       currentPage: null,
       currentNode: [0],
@@ -171,7 +207,11 @@ export default {
             background: '#64B5F6'
           }
         }
-      }
+      },
+      newFolderDialog: false,
+      newFolderName: '',
+      newFolderLoading: false,
+      deleteFolderDialog: false
     }
   },
   computed: {
@@ -201,6 +241,24 @@ export default {
         return false
       } else {
         return true
+      }
+    },
+    currentFolder() {
+      if (!this.currentNode || this.currentNode.length < 1) {
+        return null
+      }
+      return _.find(this.all, ['id', this.currentNode[0]]) || null
+    },
+    currentFolderPath() {
+      const folder = this.currentFolder
+      return folder && folder.path ? folder.path : ''
+    },
+    canManageFolders() {
+      try {
+        const perms = this.$store.get('user/permissions') || []
+        return _.includes(perms, 'manage:pages') || _.includes(perms, 'manage:system')
+      } catch (err) {
+        return false
       }
     }
   },
@@ -274,6 +332,152 @@ export default {
         this.close()
       }
     },
+    openNewFolderDialog() {
+      this.newFolderName = ''
+      this.newFolderDialog = true
+    },
+    promptDeleteFolder() {
+      this.deleteFolderDialog = true
+    },
+    folderSlug(name) {
+      return _.kebabCase(_.trim(name || ''))
+    },
+    async reloadTree(targetPath = null) {
+      this.tree = [
+        {
+          id: 0,
+          title: '/ (root)',
+          children: []
+        }
+      ]
+      this.currentNode = [0]
+      this.openNodes = [0]
+      this.pages = []
+      this.all = []
+      this.treeViewCacheId += 1
+      await this.$nextTick()
+      await this.fetchFolders(this.tree[0])
+      if (targetPath) {
+        await this.expandToPath(targetPath)
+      }
+    },
+    async expandToPath(path) {
+      if (!path) { return }
+      const segments = path.split('/')
+      let parentId = 0
+      let currentPath = ''
+      for (const segment of segments) {
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment
+        let node = _.find(this.all, ['path', currentPath])
+        if (!node) {
+          const parentNode = parentId === 0 ? this.tree[0] : _.find(this.all, ['id', parentId])
+          if (parentNode) {
+            await this.fetchFolders(parentNode)
+            node = _.find(this.all, ['path', currentPath])
+          }
+        }
+        if (node) {
+          if (!_.includes(this.openNodes, node.id)) {
+            this.openNodes.push(node.id)
+          }
+          parentId = node.id
+        } else {
+          break
+        }
+      }
+      const targetNode = _.find(this.all, ['path', path])
+      if (targetNode) {
+        this.currentNode = [targetNode.id]
+      }
+    },
+    async createFolderConfirm() {
+      if (this.newFolderLoading) { return }
+      const name = _.trim(this.newFolderName)
+      if (!name) {
+        this.$store.commit('showNotification', {
+          style: 'error',
+          message: this.$t ? this.$t('common:validation.required') : 'Folder name is required.',
+          icon: 'alert'
+        })
+        return
+      }
+      const slug = this.folderSlug(name)
+      if (!slug) {
+        this.$store.commit('showNotification', {
+          style: 'error',
+          message: 'Invalid folder name.',
+          icon: 'alert'
+        })
+        return
+      }
+      const basePath = this.currentFolderPath
+      const targetPath = basePath ? `${basePath}/${slug}` : slug
+      this.newFolderLoading = true
+      try {
+        const resp = await this.$apollo.mutate({
+          mutation: createFolderMutation,
+          variables: {
+            locale: this.currentLocale,
+            path: targetPath,
+            title: name
+          }
+        })
+        const result = _.get(resp, 'data.pages.createFolder', {})
+        if (_.get(result, 'responseResult.succeeded')) {
+          this.$store.commit('showNotification', {
+            style: 'success',
+            message: result.responseResult.message || 'Folder created successfully.',
+            icon: 'folder'
+          })
+          this.newFolderDialog = false
+          this.newFolderName = ''
+          await this.reloadTree(targetPath)
+        } else {
+          throw new Error(_.get(result, 'responseResult.message', 'Unable to create folder.'))
+        }
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'error',
+          message: err.message,
+          icon: 'alert'
+        })
+      } finally {
+        this.newFolderLoading = false
+      }
+    },
+    async deleteFolderConfirm() {
+      if (!this.currentFolderPath || this.currentFolderPath.length < 1) {
+        this.deleteFolderDialog = false
+        return
+      }
+      try {
+        const resp = await this.$apollo.mutate({
+          mutation: deleteFolderMutation,
+          variables: {
+            locale: this.currentLocale,
+            path: this.currentFolderPath
+          }
+        })
+        const result = _.get(resp, 'data.pages.deleteFolder', {})
+        if (_.get(result, 'responseResult.succeeded')) {
+          this.$store.commit('showNotification', {
+            style: 'success',
+            message: result.responseResult.message || 'Folder deleted successfully.',
+            icon: 'check'
+          })
+          this.deleteFolderDialog = false
+          await this.reloadTree()
+        } else {
+          throw new Error(_.get(result, 'responseResult.message', 'Unable to delete folder.'))
+        }
+      } catch (err) {
+        this.$store.commit('showNotification', {
+          style: 'error',
+          message: err.message,
+          icon: 'alert'
+        })
+      }
+    },
     async fetchFolders (item) {
       this.searchLoading = true
       const resp = await this.$apollo.query({
@@ -323,6 +527,21 @@ export default {
   }
   .v-treeview-node__content {
     cursor: pointer;
+  }
+}
+
+.page-selector-new-folder {
+  .dialog-header {
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+  }
+
+  .v-card-text {
+    padding-bottom: 0 !important;
+  }
+
+  .v-card__actions {
+    padding: 0 24px 16px;
   }
 }
 

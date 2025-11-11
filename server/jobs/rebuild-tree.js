@@ -54,6 +54,50 @@ module.exports = async (pageId) => {
       }
     }
 
+    const manualFolders = await WIKI.models.knex('pageFolders').select('localeCode', 'path', 'title')
+    for (const folder of manualFolders) {
+      const segments = folder.path.split('/').filter(Boolean)
+      if (segments.length < 1) { continue }
+      let currentPath = ''
+      let parentId = null
+      let depth = 0
+      let ancestors = []
+      for (const segment of segments) {
+        depth++
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment
+        const ancestorsSnapshot = ancestors.slice()
+        const isLast = depth === segments.length
+        let node = _.find(tree, {
+          localeCode: folder.localeCode,
+          path: currentPath
+        })
+        if (!node) {
+          pik++
+          node = {
+            id: pik,
+            localeCode: folder.localeCode,
+            path: currentPath,
+            depth,
+            title: isLast ? folder.title : segment,
+            isFolder: true,
+            isPrivate: false,
+            privateNS: null,
+            parent: parentId,
+            pageId: null,
+            ancestors: JSON.stringify(ancestorsSnapshot)
+          }
+          tree.push(node)
+        } else {
+          node.isFolder = true
+          if (isLast && node.title !== folder.title) {
+            node.title = folder.title
+          }
+        }
+        parentId = node.id
+        ancestors = ancestorsSnapshot.concat(parentId)
+      }
+    }
+
     await WIKI.models.knex.table('pageTree').truncate()
     if (tree.length > 0) {
       // -> Save in chunks, because of per query max parameters (35k Postgres, 2k MSSQL, 1k for SQLite)

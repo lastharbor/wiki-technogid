@@ -70,11 +70,12 @@
                 @keyup.up='searchMove(`up`)'
                 autocomplete='none'
               )
-            v-tooltip(bottom)
-              template(v-slot:activator='{ on }')
-                v-btn.ml-2.mr-0(icon, v-on='on', href='/t', :aria-label='$t(`common:header.browseTags`)')
-                  v-icon(color='grey') mdi-tag-multiple
-              span {{$t('common:header.browseTags')}}
+            template(v-if='showBrowseTags')
+              v-tooltip(bottom)
+                template(v-slot:activator='{ on }')
+                  v-btn.ml-2.mr-0(icon, v-on='on', href='/t', :aria-label='$t(`common:header.browseTags`)')
+                    v-icon(color='grey') mdi-tag-multiple
+                span {{$t('common:header.browseTags')}}
       v-flex(xs7, md4)
         v-toolbar.nav-header-inner.pr-4(color='black', dark, flat)
           v-spacer
@@ -175,6 +176,19 @@
               span {{$t('common:header.newPage')}}
             v-divider(vertical)
 
+          //- APPROVALS
+
+          template(v-if='isAuthenticated && hasApprovalAccess')
+            v-tooltip(bottom, v-if='!isApprovalsRoute')
+              template(v-slot:activator='{ on }')
+                v-btn(icon, tile, height='64', v-on='on', href='/approvals', aria-label='Page moderators workspace')
+                  v-icon(color='grey') mdi-check-decagram
+              span {{ approvalsLabel }}
+            v-btn(v-else, text, tile, height='64', href='/', :aria-label='$t(`common:actions.exit`)')
+              v-icon(left, color='grey') mdi-exit-to-app
+              span {{$t('common:actions.exit')}}
+            v-divider(vertical)
+
           //- ADMIN
 
           template(v-if='isAuthenticated && isAdmin')
@@ -241,12 +255,6 @@
     page-selector(mode='create', v-model='duplicateOpts.modal', :open-handler='pageDuplicateHandle', :path='duplicateOpts.path', :locale='duplicateOpts.locale')
     page-delete(v-model='deletePageModal', v-if='path && path.length')
     page-convert(v-model='convertPageModal', v-if='path && path.length')
-
-    .nav-header-dev(v-if='isDevMode')
-      v-icon mdi-alert
-      div
-        .overline DEVELOPMENT VERSION
-        .overline This code base is NOT for production use!
 </template>
 
 <script>
@@ -255,7 +263,7 @@ import _ from 'lodash'
 
 import movePageMutation from 'gql/common/common-pages-mutation-move.gql'
 
-/* global siteConfig, siteLangs */
+/* global siteLangs */
 
 export default {
   components: {
@@ -282,7 +290,6 @@ export default {
       convertPageModal: false,
       deletePageModal: false,
       locales: siteLangs,
-      isDevMode: false,
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -332,6 +339,36 @@ export default {
       return this.hasAdminPermission || _.intersection(this.permissions, ['write:pages']).length > 0
     },
     hasAdminPermission: get('page/effectivePermissions@system.manage'),
+    isApprovalsRoute () {
+      if (this.mode === 'approvals') {
+        return true
+      }
+      if (this.$route && this.$route.path) {
+        return this.$route.path.startsWith('/approvals')
+      }
+      if (typeof window !== 'undefined') {
+        return window.location.pathname.startsWith('/approvals')
+      }
+      return false
+    },
+    hasApprovalAccess () {
+      return _.intersection(this.permissions, ['approve:pages', 'manage:pages', 'manage:system']).length > 0
+    },
+    isHomePage () {
+      return this.mode === 'view' && this.path === 'home'
+    },
+    approvalsLabel () {
+      const label = this.$t('common:header.pageModerators')
+      if (!label) {
+        return 'Page Moderators'
+      }
+      const normalized = String(label).trim()
+      const fallbackKeys = ['common:header.pageModerators', 'header.pageModerators', 'common:header.approvals', 'HEADER.APPROVALS', 'HEADER.PAGE_MODERATORS']
+      return fallbackKeys.includes(normalized) ? 'Page Moderators' : normalized
+    },
+    showBrowseTags () {
+      return !this.isApprovalsRoute && this.mode !== 'edit'
+    },
     hasWritePagesPermission: get('page/effectivePermissions@pages.write'),
     hasManagePagesPermission: get('page/effectivePermissions@pages.manage'),
     hasDeletePagesPermission: get('page/effectivePermissions@pages.delete'),
@@ -369,7 +406,6 @@ export default {
     this.$root.$on('pageDelete', () => {
       this.pageDelete()
     })
-    this.isDevMode = siteConfig.devMode === true
   },
   methods: {
     searchFocus () {

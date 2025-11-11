@@ -66,6 +66,20 @@ export default {
               disabled: false
             },
             {
+              permission: 'approve:pages',
+              hint: 'Can approve or reject pending page changes',
+              warning: false,
+              restrictedForSystem: true,
+              disabled: false
+            },
+            {
+              permission: 'publish:pages',
+              hint: 'Can publish pages without requiring approval',
+              warning: false,
+              restrictedForSystem: true,
+              disabled: false
+            },
+            {
               permission: 'delete:pages',
               hint: 'Can delete existing pages, as specified in the Page Rules',
               warning: false,

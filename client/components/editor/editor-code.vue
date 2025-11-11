@@ -90,6 +90,16 @@ import 'codemirror/addon/search/searchcursor.js'
 // ========================================
 
 export default {
+  props: {
+    save: {
+      type: Function,
+      default: () => {}
+    },
+    openReviewerComments: {
+      type: Function,
+      default: null
+    }
+  },
   data() {
     return {
       cm: null,
@@ -106,6 +116,11 @@ export default {
     activeModal: sync('editor/activeModal')
   },
   methods: {
+    showReviewerNotes() {
+      if (typeof this.openReviewerComments === 'function') {
+        this.openReviewerComments()
+      }
+    },
     toggleModal(key) {
       this.activeModal = (this.activeModal === key) ? '' : key
       this.helpShown = false
@@ -247,7 +262,7 @@ export default {
     })
 
     // Handle save conflict
-    this.$root.$on('saveConflict', () => {
+    this.$root.$on('save-conflict', () => {
       this.toggleModal(`editorModalConflict`)
     })
     this.$root.$on('overwriteEditorContent', () => {

@@ -1,0 +1,16 @@
+mutation ($locale: String!, $path: String!, $title: String) {
+  pages {
+    createFolder(locale: $locale, path: $path, title: $title) {
+      responseResult {
+        succeeded
+        message
+      }
+      folder {
+        locale
+        path
+        title
+      }
+    }
+  }
+}
+

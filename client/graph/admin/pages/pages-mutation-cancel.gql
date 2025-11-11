@@ -1,0 +1,21 @@
+mutation ($id: Int!) {
+  pages {
+    cancelPending(id: $id) {
+      responseResult {
+        succeeded
+        errorCode
+        message
+      }
+      page {
+        id
+        approvalStatus
+        approvalComment
+        pendingVersionId
+        approverName
+        approverEmail
+        updatedAt
+      }
+    }
+  }
+}
+

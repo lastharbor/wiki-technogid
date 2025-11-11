@@ -18,6 +18,7 @@
           v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth')
             v-list-item-icon: v-icon mdi-lock
             v-list-item-title Authentication
+        v-divider
       .editor-api-editor
         template(v-if='tab === `info`')
           v-container.px-2.pt-1(fluid)
@@ -229,6 +230,16 @@ import { v4 as uuid } from 'uuid'
 import { get, sync } from 'vuex-pathify'
 
 export default {
+  props: {
+    save: {
+      type: Function,
+      default: () => {}
+    },
+    openReviewerComments: {
+      type: Function,
+      default: null
+    }
+  },
   data() {
     return {
       tab: `endpoints`,
@@ -322,12 +333,20 @@ export default {
     isMobile() {
       return this.$vuetify.breakpoint.smAndDown
     },
+    hasReviewerNotes() {
+      return typeof this.openReviewerComments === 'function'
+    },
     locale: get('page/locale'),
     path: get('page/path'),
     mode: get('editor/mode'),
     activeModal: sync('editor/activeModal')
   },
   methods: {
+    showReviewerNotes() {
+      if (typeof this.openReviewerComments === 'function') {
+        this.openReviewerComments()
+      }
+    },
     iconColor (val) {
       return _.get(this.serverTypes, `${val}.color`, 'white')
     },

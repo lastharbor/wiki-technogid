@@ -18,4 +18,5 @@ block body
       :is-published=page.isPublished.toString()
       live-content=page.content
       effective-permissions=Buffer.from(JSON.stringify(effectivePermissions)).toString('base64')
+      approval-comment=page.approvalComment || ''
       )

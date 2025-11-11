@@ -22,6 +22,27 @@ query($id: Int!) {
       creatorId
       creatorName
       creatorEmail
+      approvalStatus
+      approvalComment
+      pendingVersionId
+      approverName
+      approverEmail
+      tags {
+        tag
+      }
+      pendingVersion {
+        versionId
+        authorId
+        authorName
+        versionDate
+        workflowStatus
+        title
+        description
+        publishStartDate
+        publishEndDate
+        isPublished
+        tags
+      }
     }
   }
 }

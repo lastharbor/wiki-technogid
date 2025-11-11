@@ -200,45 +200,64 @@ module.exports = {
       if (!item.binary && contentType) {
         // -> Page
 
-        if (fileExists && !item.importAll && item.relPath !== item.oldPath) {
+        if (fileExists && !item.importAll && item.relPath !== item.oldPath && item.oldPath) {
           // Page was renamed by git, so rename in DB
           WIKI.logger.info(`(STORAGE/GIT) Page marked as renamed: from ${item.oldPath} to ${item.relPath}`)
 
           const contentPath = pageHelper.getPagePath(item.oldPath)
           const contentDestinationPath = pageHelper.getPagePath(item.relPath)
-          await WIKI.models.pages.movePage({
-            user: user,
-            path: contentPath.path,
-            destinationPath: contentDestinationPath.path,
-            locale: contentPath.locale,
-            destinationLocale: contentPath.locale,
-            skipStorage: true
-          })
+
+          try {
+            await WIKI.models.pages.movePage({
+              user: user,
+              path: contentPath.path,
+              destinationPath: contentDestinationPath.path,
+              locale: contentPath.locale,
+              destinationLocale: contentPath.locale,
+              skipStorage: true
+            })
+          } catch (err) {
+            // If rename fails (e.g., source doesn't exist), treat as new/modified
+            WIKI.logger.warn(`(STORAGE/GIT) Failed to rename page, processing as new/modified: ${item.relPath}`)
+            await commonDisk.processPage({
+              user,
+              relPath: item.relPath,
+              fullPath: this.repoPath,
+              contentType: contentType,
+              moduleName: 'GIT'
+            })
+          }
         } else if (!fileExists && !item.importAll && item.deletions > 0 && item.insertions === 0) {
           // Page was deleted by git, can safely mark as deleted in DB
           WIKI.logger.info(`(STORAGE/GIT) Page marked as deleted: ${item.relPath}`)
 
           const contentPath = pageHelper.getPagePath(item.relPath)
-          await WIKI.models.pages.deletePage({
-            user: user,
-            path: contentPath.path,
-            locale: contentPath.locale,
-            skipStorage: true
-          })
+          try {
+            await WIKI.models.pages.deletePage({
+              user: user,
+              path: contentPath.path,
+              locale: contentPath.locale,
+              skipStorage: true
+            })
+          } catch (err) {
+            WIKI.logger.warn(`(STORAGE/GIT) Failed to delete page (may not exist): ${item.relPath}`)
+          }
           continue
-        }
-
-        try {
-          await commonDisk.processPage({
-            user,
-            relPath: item.relPath,
-            fullPath: this.repoPath,
-            contentType: contentType,
-            moduleName: 'GIT'
-          })
-        } catch (err) {
-          WIKI.logger.warn(`(STORAGE/GIT) Failed to process ${item.relPath}`)
-          WIKI.logger.warn(err)
+        } else if (fileExists) {
+          // File exists - either new, modified, or restored
+          // Let processPage handle it (it will create or update as needed)
+          try {
+            await commonDisk.processPage({
+              user,
+              relPath: item.relPath,
+              fullPath: this.repoPath,
+              contentType: contentType,
+              moduleName: 'GIT'
+            })
+          } catch (err) {
+            WIKI.logger.warn(`(STORAGE/GIT) Failed to process ${item.relPath}`)
+            WIKI.logger.warn(err)
+          }
         }
       } else {
         // -> Asset
@@ -302,6 +321,9 @@ module.exports = {
       fileName = `${page.localeCode}/${fileName}`
     }
     const filePath = path.join(this.repoPath, fileName)
+
+    // Ensure parent directories exist (Git will track them via the file)
+    await fs.ensureDir(path.dirname(filePath))
     await fs.outputFile(filePath, page.injectMetadata(), 'utf8')
 
     const gitFilePath = `./${fileName}`
@@ -324,6 +346,9 @@ module.exports = {
       fileName = `${page.localeCode}/${fileName}`
     }
     const filePath = path.join(this.repoPath, fileName)
+
+    // Ensure parent directories exist
+    await fs.ensureDir(path.dirname(filePath))
     await fs.outputFile(filePath, page.injectMetadata(), 'utf8')
 
     const gitFilePath = `./${fileName}`
@@ -375,6 +400,9 @@ module.exports = {
 
     const sourceFilePath = path.join(this.repoPath, sourceFileName)
     const destinationFilePath = path.join(this.repoPath, destinationFileName)
+
+    // Ensure destination parent directories exist
+    await fs.ensureDir(path.dirname(destinationFilePath))
     await fs.move(sourceFilePath, destinationFilePath)
 
     await this.git.rm(`./${sourceFileName}`)
@@ -488,6 +516,8 @@ module.exports = {
           }
           WIKI.logger.info(`(STORAGE/GIT) Adding page ${fileName}...`)
           const filePath = path.join(this.repoPath, fileName)
+          // Ensure parent directories exist
+          await fs.ensureDir(path.dirname(filePath))
           await fs.outputFile(filePath, pageHelper.injectPageMetadata(page), 'utf8')
           await this.git.add(`./${fileName}`)
           cb()

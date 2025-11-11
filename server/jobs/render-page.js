@@ -19,7 +19,42 @@ module.exports = async (pageId) => {
     await WIKI.models.renderers.fetchDefinitions()
     const pipeline = await WIKI.models.renderers.getRenderingPipeline(page.contentType)
 
-    let output = page.content
+    const { body: preparedContent, data: frontmatterData } = WIKI.models.pages.extractFrontmatter(page.content || '', page.contentType)
+    if (frontmatterData) {
+      page.frontmatter = frontmatterData
+      if (!page.title && _.isString(frontmatterData.title)) {
+        page.title = frontmatterData.title
+      }
+      if (!page.description && _.isString(frontmatterData.description)) {
+        page.description = frontmatterData.description
+      }
+      if (!page.tags && (Array.isArray(frontmatterData.tags) || _.isString(frontmatterData.tags))) {
+        page.tags = Array.isArray(frontmatterData.tags) ? frontmatterData.tags : _.split(frontmatterData.tags, ',').map(tag => _.trim(tag)).filter(Boolean)
+      }
+    }
+
+    if (typeof page.$relatedQuery !== 'function') {
+      page.$relatedQuery = (relationName) => {
+        if (!page.id) {
+          const empty = Promise.resolve([])
+          empty.select = () => empty
+          empty.where = () => empty
+          empty.whereIn = () => empty
+          empty.orderBy = () => empty
+          empty.limit = () => empty
+          empty.clone = () => empty
+          empty.modify = () => empty
+          empty.withGraphFetched = () => empty
+          empty.first = () => Promise.resolve(null)
+          empty.context = () => empty
+          empty.throwIfNotFound = () => empty
+          return empty
+        }
+        return WIKI.models.pages.relatedQuery(relationName).for(page.id)
+      }
+    }
+
+    let output = preparedContent
 
     if (_.isEmpty(page.content)) {
       await WIKI.models.knex.destroy()

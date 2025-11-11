@@ -10,6 +10,13 @@ extend type Mutation {
   pages: PageMutation
 }
 
+enum PageApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DRAFT
+}
+
 # -----------------------------------------------
 # QUERIES
 # -----------------------------------------------
@@ -19,7 +26,7 @@ type PageQuery {
     id: Int!
     offsetPage: Int
     offsetSize: Int
-  ): PageHistoryResult @auth(requires: ["manage:system", "read:history"])
+  ): PageHistoryResult @auth(requires: ["write:pages", "manage:system", "read:history"])
 
   version(
     pageId: Int!
@@ -40,11 +47,12 @@ type PageQuery {
     locale: String
     creatorId: Int
     authorId: Int
+    approvalStatus: PageApprovalStatus
   ): [PageListItem!]! @auth(requires: ["manage:system", "read:pages"])
 
   single(
     id: Int!
-  ): Page @auth(requires: ["read:pages", "manage:system"])
+  ): Page @auth(requires: ["write:pages", "read:pages", "manage:system"])
 
   singleByPath(
     path: String!
@@ -77,6 +85,16 @@ type PageQuery {
   conflictLatest(
     id: Int!
   ): PageConflictLatest! @auth(requires: ["write:pages", "manage:pages", "manage:system"])
+
+  approvalQueue(
+    locale: String
+    pathPrefix: String
+    status: PageApprovalStatus
+  ): [PageApprovalQueueItem!]! @auth(requires: ["approve:pages", "manage:pages", "manage:system"])
+
+  approvalDetail(
+    id: Int!
+  ): PageApprovalDetail @auth(requires: ["approve:pages", "manage:pages", "manage:system"])
 }
 
 # -----------------------------------------------
@@ -115,6 +133,8 @@ type PageMutation {
     scriptJs: String
     tags: [String]
     title: String
+    approvalComment: String
+    keepPending: Boolean
   ): PageResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
 
   convert(
@@ -127,6 +147,17 @@ type PageMutation {
     destinationPath: String!
     destinationLocale: String!
   ): DefaultResponse @auth(requires: ["manage:pages", "manage:system"])
+
+  createFolder(
+    locale: String!
+    path: String!
+    title: String
+  ): PageFolderResponse @auth(requires: ["manage:pages", "manage:system"])
+
+  deleteFolder(
+    locale: String!
+    path: String!
+  ): PageFolderResponse @auth(requires: ["manage:pages", "manage:system"])
 
   delete(
     id: Int!
@@ -163,6 +194,21 @@ type PageMutation {
   purgeHistory (
     olderThan: String!
   ): DefaultResponse @auth(requires: ["manage:system"])
+
+  approve(
+    id: Int!
+    comment: String
+    publish: Boolean
+  ): PageResponse @auth(requires: ["approve:pages", "manage:pages", "manage:system"])
+
+  reject(
+    id: Int!
+    comment: String
+  ): PageResponse @auth(requires: ["approve:pages", "manage:pages", "manage:system"])
+
+  cancelPending(
+    id: Int!
+  ): PageResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
 }
 
 # -----------------------------------------------
@@ -177,6 +223,66 @@ type PageResponse {
 type PageMigrationResponse {
   responseResult: ResponseStatus!
   count: Int
+}
+
+type PageApprovalUser {
+  id: Int!
+  name: String!
+  email: String!
+}
+
+type PageApprovalVersion {
+  versionId: Int
+  title: String!
+  description: String!
+  content: String
+  contentType: String!
+  editor: String!
+  tags: [String]!
+  render: String
+  publishStartDate: Date
+  publishEndDate: Date
+  createdAt: Date
+  author: PageApprovalUser
+  approvalComment: String
+}
+
+type PageApprovalQueueItem {
+  id: Int!
+  locale: String!
+  path: String!
+  currentTitle: String!
+  pendingTitle: String
+  approvalStatus: PageApprovalStatus!
+  updatedAt: Date!
+  submittedAt: Date
+  pendingVersionId: Int
+  submitter: PageApprovalUser
+}
+
+type PageApprovalDetail {
+  id: Int!
+  locale: String!
+  path: String!
+  approvalStatus: PageApprovalStatus!
+  approvalComment: String
+  isPublished: Boolean!
+  currentTitle: String!
+  currentDescription: String!
+  currentUpdatedAt: Date!
+  liveVersion: PageApprovalVersion
+  pendingVersion: PageApprovalVersion
+}
+
+type PageFolderResponse {
+  responseResult: ResponseStatus!
+  folder: PageFolder
+}
+
+type PageFolder {
+  locale: String!
+  path: String!
+  title: String!
 }
 
 type Page {
@@ -207,6 +313,12 @@ type Page {
   creatorId: Int! @auth(requires: ["write:pages", "manage:system"])
   creatorName: String! @auth(requires: ["write:pages", "manage:system"])
   creatorEmail: String! @auth(requires: ["write:pages", "manage:system"])
+  approvalStatus: PageApprovalStatus!
+  approvalComment: String @auth(requires: ["write:pages", "approve:pages", "manage:system"])
+  pendingVersionId: Int @auth(requires: ["write:pages", "approve:pages", "manage:system"])
+  pendingVersion: PageVersion @auth(requires: ["write:pages", "approve:pages", "manage:pages", "manage:system"])
+  approverName: String @auth(requires: ["write:pages", "approve:pages", "manage:system"])
+  approverEmail: String @auth(requires: ["write:pages", "approve:pages", "manage:system"])
 }
 
 type PageTag {
@@ -225,6 +337,8 @@ type PageHistory {
   actionType: String!
   valueBefore: String
   valueAfter: String
+  workflowStatus: String
+  approvalComment: String
 }
 
 type PageVersion {
@@ -247,6 +361,10 @@ type PageVersion {
   tags: [String]!
   title: String!
   versionId: Int!
+  scriptCss: String
+  scriptJs: String
+  workflowStatus: String
+  approvalComment: String
 }
 
 type PageHistoryResult {
@@ -281,6 +399,7 @@ type PageListItem {
   createdAt: Date!
   updatedAt: Date!
   tags: [String]
+  approvalStatus: PageApprovalStatus!
 }
 
 type PageTreeItem {

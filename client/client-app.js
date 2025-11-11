@@ -54,9 +54,9 @@ const graphQLWSEndpoint = ((window.location.protocol === 'https:') ? 'wss:' : 'w
 
 const graphQLLink = ApolloLink.from([
   new ErrorLink(({ graphQLErrors, networkError }) => {
-    if (graphQLErrors) {
+    if (graphQLErrors && Array.isArray(graphQLErrors)) {
       let isAuthError = false
-      graphQLErrors.map(({ message, locations, path }) => {
+      graphQLErrors.forEach(({ message, locations, path }) => {
         if (message === `Forbidden`) {
           isAuthError = true
         }
@@ -72,7 +72,7 @@ const graphQLLink = ApolloLink.from([
       console.error(networkError)
       store.commit('showNotification', {
         style: 'red',
-        message: `Network Error: ${networkError.message}`,
+        message: `Network Error: ${networkError.message || networkError.toString() || 'An unknown network error occurred'}`,
         icon: 'alert'
       })
     }
@@ -161,6 +161,7 @@ Vue.component('not-found', () => import(/* webpackChunkName: "not-found" */ './c
 Vue.component('page-selector', () => import(/* webpackPrefetch: true, webpackChunkName: "ui-extra" */ './components/common/page-selector.vue'))
 Vue.component('page-source', () => import(/* webpackChunkName: "source" */ './components/source.vue'))
 Vue.component('profile', () => import(/* webpackChunkName: "profile" */ './components/profile.vue'))
+Vue.component('approvals', () => import(/* webpackChunkName: "approvals" */ './components/approvals.vue'))
 Vue.component('register', () => import(/* webpackChunkName: "register" */ './components/register.vue'))
 Vue.component('search-results', () => import(/* webpackPrefetch: true, webpackChunkName: "ui-extra" */ './components/common/search-results.vue'))
 Vue.component('social-sharing', () => import(/* webpackPrefetch: true, webpackChunkName: "ui-extra" */ './components/common/social-sharing.vue'))

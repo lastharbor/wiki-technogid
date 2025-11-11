@@ -39,7 +39,7 @@
                     .caption(v-else-if='ph.actionType === `live`') Last Edited by #[strong {{ ph.authorName }}]
                     .caption(v-else) Unknown Action by #[strong {{ ph.authorName }}]
                     v-spacer
-                    v-menu(offset-x, left)
+                    v-menu(offset-x, left, v-if='ph.versionId !== 0')
                       template(v-slot:activator='{ on }')
                         v-btn.mr-2.radius-4(icon, v-on='on', small, tile): v-icon mdi-dots-horizontal
                       v-list(dense, nav).history-promptmenu
@@ -79,6 +79,20 @@
                       :class='diffTarget === ph.versionId ? `pink white--text` : ($vuetify.theme.dark ? `grey darken-2` : `grey lighten-2`)'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'
                       ): strong B
+                v-card-text.py-2(v-if='historyStatus(ph) || (ph.approvalComment && ph.approvalComment.length)')
+                  v-chip.mb-2(
+                    v-if='historyStatus(ph)'
+                    :color='historyStatus(ph).color'
+                    :text-color='historyStatus(ph).textColor'
+                    :dark='historyStatus(ph).dark'
+                    small
+                    label
+                  )
+                    v-icon(left, small) {{ historyStatus(ph).icon }}
+                    span {{ historyStatus(ph).label }}
+                  .history-comment.caption.mt-2(v-if='ph.approvalComment && ph.approvalComment.length')
+                    strong Reviewer comment:&nbsp;
+                    span {{ ph.approvalComment }}
 
             v-btn.ma-0.radius-7(
               v-if='total > trail.length'
@@ -110,6 +124,23 @@
                         v-icon(left) mdi-eye
                         .overline View Mode
                 v-card.mt-3(light, v-html='diffHTML', flat)
+                v-card.mt-4(v-if='activeReviewComment', outlined)
+                  v-card-title.py-2
+                    v-icon.mr-2(color='amber darken-2') mdi-comment-text-outline
+                    span.subtitle-2 Reviewer Comment
+                    v-spacer
+                    v-chip(
+                      small
+                      label
+                      v-if='activeReviewMeta'
+                      :color='activeReviewMeta.color'
+                      :text-color='activeReviewMeta.textColor'
+                      :dark='activeReviewMeta.dark'
+                    ) {{ activeReviewMeta.label }}
+                  v-divider
+                  v-card-text
+                    div.body-2 {{ activeReviewComment }}
+                    div.caption.grey--text.mt-2 {{ target.versionDate | moment('LLL') }}
 
     v-dialog(v-model='isRestoreConfirmDialogShown', max-width='650', persistent)
       v-card
@@ -189,6 +220,10 @@ export default {
     effectivePermissions: {
       type: String,
       default: ''
+    },
+    approvalComment: {
+      type: String,
+      default: ''
     }
   },
   data () {
@@ -235,7 +270,9 @@ export default {
         actionType: 'live',
         valueBefore: null,
         valueAfter: null,
-        versionDate: this.updatedAt
+        versionDate: this.updatedAt,
+        workflowStatus: 'LIVE',
+        approvalComment: this.approvalComment
       }
       // -> Check for move between latest and live
       const prevPage = _.find(this.cache, ['versionId', _.get(this.trail, '[0].versionId', -1)])
@@ -260,6 +297,23 @@ export default {
         matching: 'lines',
         outputFormat: this.viewMode
       })
+    },
+    activeReviewDetails () {
+      const targetDetails = this.getReviewDetails(this.target)
+      if (targetDetails) {
+        return targetDetails
+      }
+      const sourceDetails = this.getReviewDetails(this.source)
+      if (sourceDetails) {
+        return sourceDetails
+      }
+      return null
+    },
+    activeReviewComment () {
+      return _.get(this.activeReviewDetails, 'comment', '')
+    },
+    activeReviewMeta () {
+      return _.get(this.activeReviewDetails, 'meta', null)
     }
   },
   watch: {
@@ -316,7 +370,9 @@ export default {
       tags: this.tags,
       title: this.title,
       versionId: 0,
-      versionDate: this.updatedAt
+      versionDate: this.updatedAt,
+      workflowStatus: 'LIVE',
+      approvalComment: this.approvalComment
     })
 
     this.target = this.cache[0]
@@ -352,6 +408,8 @@ export default {
                 tags
                 title
                 versionId
+                approvalComment
+                workflowStatus
               }
             }
           }
@@ -490,6 +548,62 @@ export default {
           return 'grey'
       }
     },
+    historyStatus (ph) {
+      const status = _.toUpper(_.get(ph, 'workflowStatus', ''))
+      switch (status) {
+        case 'PENDING':
+          return {
+            label: 'Awaiting approval',
+            color: 'amber darken-2',
+            textColor: null,
+            dark: true,
+            icon: 'mdi-timer-sand'
+          }
+        case 'APPROVED':
+          return {
+            label: 'Approved',
+            color: 'green darken-2',
+            textColor: null,
+            dark: true,
+            icon: 'mdi-check-decagram'
+          }
+        case 'REJECTED':
+          return {
+            label: 'Rejected',
+            color: 'red darken-2',
+            textColor: null,
+            dark: true,
+            icon: 'mdi-close-octagon'
+          }
+        case 'CANCELLED':
+          return {
+            label: 'Submission cancelled',
+            color: this.$vuetify.theme.dark ? 'blue-grey darken-2' : 'blue-grey lighten-4',
+            textColor: this.$vuetify.theme.dark ? null : 'blue-grey darken-2',
+            dark: this.$vuetify.theme.dark,
+            icon: 'mdi-progress-close'
+          }
+        default:
+          return null
+      }
+    },
+    getReviewDetails(entry) {
+      if (!entry) {
+        return null
+      }
+      const commentRaw = _.get(entry, 'approvalComment', '')
+      if (!_.isString(commentRaw)) {
+        return null
+      }
+      const comment = commentRaw.trim()
+      if (!comment) {
+        return null
+      }
+      return {
+        comment,
+        meta: this.historyStatus(entry)
+      }
+    },
     trailIcon (actionType) {
       switch (actionType) {
         case 'edit':
@@ -531,6 +645,8 @@ export default {
                 valueBefore
                 valueAfter
                 versionDate
+                workflowStatus
+                approvalComment
               }
               total
             }
@@ -564,6 +680,11 @@ export default {
     border-top: 5px solid mc('blue', '700');
   }
 
+  &-comment {
+    font-style: italic;
+    color: mc('brown', '700');
+  }
+
   .d2h-file-wrapper {
     border: 1px solid #EEE;
     border-left: none;
@@ -572,6 +693,20 @@ export default {
   .d2h-file-header {
     display: none;
   }
+
+  .history-review-panel {
+    border-radius: 8px;
+    padding: 16px;
+    background-color: rgba(55, 71, 79, 0.08);
+  }
+
+  .theme--dark .history-review-panel {
+    background-color: rgba(144, 164, 174, 0.15);
+  }
+}
+
+.theme--dark .history-comment {
+  color: mc('amber', '200');
 }
 
 </style>

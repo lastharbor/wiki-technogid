@@ -49,6 +49,16 @@
               v-model='selectedState'
               style='max-width: 250px;'
             )
+          v-select.ml-2(
+            solo
+            flat
+            hide-details
+            dense
+            label='Approval State'
+            :items='approvalFilters'
+            v-model='selectedApproval'
+            style='max-width: 250px;'
+          )
           v-divider
           v-data-table(
             :items='filteredPages'
@@ -72,6 +82,8 @@
                 td.admin-pages-path
                   v-chip(label, small, :color='$vuetify.theme.dark ? `grey darken-4` : `grey lighten-4`') {{ props.item.locale }}
                   span.ml-2.grey--text(:class='$vuetify.theme.dark ? `text--lighten-1` : `text--darken-2`') / {{ props.item.path }}
+                td
+                  v-chip(label, small, :color='approvalStyle(props.item.approvalStatus).color', :text-color='approvalStyle(props.item.approvalStatus).text') {{ approvalLabel(props.item.approvalStatus) }}
                 td {{ props.item.createdAt | moment('calendar') }}
                 td {{ props.item.updatedAt | moment('calendar') }}
             template(slot='no-data')
@@ -95,17 +107,32 @@ export default {
         { text: 'ID', value: 'id', width: 80, sortable: true },
         { text: 'Title', value: 'title' },
         { text: 'Path', value: 'path' },
+        { text: 'Approval', value: 'approvalStatus', width: 160 },
         { text: 'Created', value: 'createdAt', width: 250 },
         { text: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
       search: '',
       selectedLang: null,
       selectedState: null,
+      selectedApproval: null,
       states: [
         { text: 'All Publishing States', value: null },
         { text: 'Published', value: true },
         { text: 'Not Published', value: false }
       ],
+      approvalFilters: [
+        { text: 'All Review States', value: null },
+        { text: 'Pending Approval', value: 'PENDING' },
+        { text: 'Approved', value: 'APPROVED' },
+        { text: 'Rejected', value: 'REJECTED' },
+        { text: 'Draft', value: 'DRAFT' }
+      ],
+      approvalStatusStyles: {
+        APPROVED: { color: 'green lighten-4', text: 'green darken-2' },
+        PENDING: { color: 'amber lighten-4', text: 'amber darken-4' },
+        REJECTED: { color: 'red lighten-4', text: 'red darken-2' },
+        DRAFT: { color: 'blue-grey lighten-4', text: 'blue-grey darken-2' }
+      },
       loading: false
     }
   },
@@ -116,6 +143,10 @@ export default {
           return false
         }
         if (this.selectedState !== null && this.selectedState !== pg.isPublished) {
+          return false
+        }
+        const approval = (pg.approvalStatus || 'APPROVED').toUpperCase()
+        if (this.selectedApproval !== null && this.selectedApproval !== approval) {
           return false
         }
         return true
@@ -143,13 +174,23 @@ export default {
     newpage() {
       this.pageSelectorShown = true
     },
-    recyclebin () { }
+    recyclebin () { },
+    approvalLabel(status) {
+      return _.startCase((status || 'APPROVED').toLowerCase())
+    },
+    approvalStyle(status) {
+      const key = (status || 'APPROVED').toUpperCase()
+      return this.approvalStatusStyles[key] || this.approvalStatusStyles.APPROVED
+    }
   },
   apollo: {
     pages: {
       query: pagesQuery,
       fetchPolicy: 'network-only',
-      update: (data) => data.pages.list,
+      update: (data) => data.pages.list.map(pg => ({
+        ...pg,
+        approvalStatus: (pg.approvalStatus || 'APPROVED').toUpperCase()
+      })),
       watchLoading (isLoading) {
         this.loading = isLoading
         this.$store.commit(`loading${isLoading ? 'Start' : 'Stop'}`, 'admin-pages-refresh')

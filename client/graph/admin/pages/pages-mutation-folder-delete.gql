@@ -1,0 +1,16 @@
+mutation ($locale: String!, $path: String!) {
+  pages {
+    deleteFolder(locale: $locale, path: $path) {
+      responseResult {
+        succeeded
+        message
+      }
+      folder {
+        locale
+        path
+        title
+      }
+    }
+  }
+}
+

@@ -115,6 +115,7 @@ defaults:
     maintainerEmail: security@requarks.io
 localeNamespaces:
   - admin
+  - approvals
   - auth
   - common
 jobs:

@@ -26,6 +26,9 @@ module.exports = class PageHistory extends Model {
         publishEndDate: {type: 'string'},
         content: {type: 'string'},
         contentType: {type: 'string'},
+        workflowStatus: {type: 'string'},
+        sourceVersionId: {type: ['integer', 'null']},
+        extra: {type: ['object', 'string', 'null']},
 
         createdAt: {type: 'string'}
       }
@@ -89,7 +92,25 @@ module.exports = class PageHistory extends Model {
    * Create Page Version
    */
   static async addVersion(opts) {
-    await WIKI.models.pageHistory.query().insert({
+    let extraData = opts.extra || {}
+    if (_.isString(extraData)) {
+      try {
+        extraData = JSON.parse(extraData)
+      } catch (err) {
+        extraData = {}
+      }
+    }
+    extraData = _.cloneDeep(extraData)
+
+    if (Object.prototype.hasOwnProperty.call(opts, 'approvalComment')) {
+      extraData.approvalComment = opts.approvalComment
+    }
+
+    if (WIKI.config.db.type === 'sqlite') {
+      extraData = JSON.stringify(extraData)
+    }
+
+    const version = await WIKI.models.pageHistory.query().insert({
       pageId: opts.id,
       authorId: opts.authorId,
       content: opts.content,
@@ -105,8 +126,15 @@ module.exports = class PageHistory extends Model {
       publishStartDate: opts.publishStartDate || '',
       title: opts.title,
       action: opts.action || 'updated',
-      versionDate: opts.versionDate
+      versionDate: opts.versionDate,
+      workflowStatus: opts.workflowStatus || 'history',
+      sourceVersionId: opts.sourceVersionId || null,
+      extra: extraData
     })
+    if (opts.tags && opts.tags.length > 0) {
+      await WIKI.models.tags.associateHistoryTags({ tags: opts.tags, versionId: version.id })
+    }
+    return version
   }
 
   /**
@@ -128,6 +156,8 @@ module.exports = class PageHistory extends Model {
         'pageHistory.action',
         'pageHistory.authorId',
         'pageHistory.pageId',
+        'pageHistory.workflowStatus',
+        'pageHistory.extra',
         'pageHistory.versionDate',
         {
           versionId: 'pageHistory.id',
@@ -142,10 +172,23 @@ module.exports = class PageHistory extends Model {
         'pageHistory.pageId': pageId
       }).first()
     if (version) {
+      if (typeof version.extra === 'string') {
+        try {
+          version.extra = JSON.parse(version.extra)
+        } catch (err) {
+          version.extra = null
+        }
+      }
+      const versionTags = await WIKI.models.tags.getHistoryTags(versionId)
+      const approvalComment = _.get(version.extra, 'approvalComment', '')
       return {
         ...version,
         updatedAt: version.createdAt || null,
-        tags: []
+        tags: versionTags.map(t => t.tag),
+        scriptCss: _.get(version.extra, 'css', ''),
+        scriptJs: _.get(version.extra, 'js', ''),
+        workflowStatus: (version.workflowStatus || 'history').toUpperCase(),
+        approvalComment: _.isString(approvalComment) ? approvalComment : ''
       }
     } else {
       return null
@@ -163,6 +206,8 @@ module.exports = class PageHistory extends Model {
         'pageHistory.authorId',
         'pageHistory.action',
         'pageHistory.versionDate',
+        'pageHistory.workflowStatus',
+        'pageHistory.extra',
         {
           authorName: 'author.name'
         }
@@ -185,6 +230,8 @@ module.exports = class PageHistory extends Model {
           'pageHistory.authorId',
           'pageHistory.action',
           'pageHistory.versionDate',
+          'pageHistory.workflowStatus',
+          'pageHistory.extra',
           {
             authorName: 'author.name'
           }
@@ -213,6 +260,19 @@ module.exports = class PageHistory extends Model {
           valueAfter = ph.path
         }
 
+        let extra = ph.extra || {}
+        if (_.isString(extra)) {
+          try {
+            extra = JSON.parse(extra)
+          } catch (err) {
+            extra = {}
+          }
+        }
+
+        const approvalComment = _.get(extra, 'approvalComment', '')
+        const approvalCommentValue = _.isString(approvalComment) ? _.trim(approvalComment) : ''
+        const workflowStatus = _.get(ph, 'workflowStatus', '')
+
         res.unshift({
           versionId: ph.id,
           authorId: ph.authorId,
@@ -220,7 +280,9 @@ module.exports = class PageHistory extends Model {
           actionType,
           valueBefore,
           valueAfter,
-          versionDate: ph.versionDate
+          versionDate: ph.versionDate,
+          workflowStatus: workflowStatus ? workflowStatus.toUpperCase() : '',
+          approvalComment: approvalCommentValue
         })
 
         prevPh = ph

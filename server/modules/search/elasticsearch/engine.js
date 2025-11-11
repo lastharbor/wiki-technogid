@@ -135,7 +135,7 @@ module.exports = {
         } catch (err) {
           WIKI.logger.error(`(SEARCH/ELASTICSEARCH) Create Index Error: `, _.get(err, 'meta.body.error', err))
         }
-      } 
+      }
     } catch (err) {
       WIKI.logger.error(`(SEARCH/ELASTICSEARCH) Index Check Error: `, _.get(err, 'meta.body.error', err))
     }

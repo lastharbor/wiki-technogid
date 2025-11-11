@@ -56,7 +56,7 @@ export default {
         load: 'currentOnly',
         lowerCaseLng: true,
         fallbackLng: siteConfig.lang,
-        ns: ['common', 'auth']
+        ns: ['common', 'auth', 'approvals']
       })
     return new VueI18Next(i18next)
   }

@@ -12,6 +12,7 @@ query {
       privateNS
       createdAt
       updatedAt
+      approvalStatus
     }
   }
 }

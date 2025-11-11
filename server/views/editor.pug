@@ -23,4 +23,10 @@ block body
       init-content=page.content
       checkout-date=page.updatedAt
       effective-permissions=Buffer.from(JSON.stringify(effectivePermissions)).toString('base64')
+      approval-status=page.approvalStatus
+      approval-comment=page.approvalComment
+      :pending-version-id=page.pendingVersionId
+      approver-name=page.approverName
+      approver-email=page.approverEmail
+      origin=page.origin
       )

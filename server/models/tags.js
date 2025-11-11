@@ -102,4 +102,56 @@ module.exports = class Tag extends Model {
 
     page.tags = targetTags
   }
+
+  static async associateHistoryTags ({ tags, versionId }) {
+    if (!versionId) { return }
+
+    let existingTags = await WIKI.models.tags.query().column('id', 'tag')
+    tags = _.uniq(tags.map(t => _.trim(t).toLowerCase()))
+
+    const newTags = _.filter(tags, t => !_.some(existingTags, ['tag', t])).map(t => ({
+      tag: t,
+      title: t
+    }))
+
+    if (newTags.length > 0) {
+      if (WIKI.config.db.type === 'postgres') {
+        const createdTags = await WIKI.models.tags.query().insert(newTags)
+        existingTags = _.concat(existingTags, createdTags)
+      } else {
+        for (const newTag of newTags) {
+          const createdTag = await WIKI.models.tags.query().insert(newTag)
+          existingTags.push(createdTag)
+        }
+      }
+    }
+
+    const targetTags = _.filter(existingTags, t => _.includes(tags, t.tag))
+
+    // Clear existing relations for this version
+    await WIKI.models.knex('pageHistoryTags').where('pageId', versionId).del()
+
+    if (targetTags.length > 0) {
+      const relations = targetTags.map(tag => ({
+        pageId: versionId,
+        tagId: tag.id
+      }))
+      if (WIKI.config.db.type === 'postgres') {
+        await WIKI.models.knex.batchInsert('pageHistoryTags', relations)
+      } else {
+        for (const rel of relations) {
+          await WIKI.models.knex('pageHistoryTags').insert(rel)
+        }
+      }
+    }
+  }
+
+  static async getHistoryTags (versionId) {
+    if (!versionId) { return [] }
+    const rows = await WIKI.models.knex('pageHistoryTags')
+      .join('tags', 'pageHistoryTags.tagId', 'tags.id')
+      .where('pageHistoryTags.pageId', versionId)
+      .select('tags.tag', 'tags.title', 'tags.id')
+    return rows
+  }
 }

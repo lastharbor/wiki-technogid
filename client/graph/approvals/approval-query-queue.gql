@@ -1,0 +1,21 @@
+query ($status: PageApprovalStatus) {
+  pages {
+    approvalQueue(status: $status) {
+      id
+      locale
+      path
+      currentTitle
+      pendingTitle
+      approvalStatus
+      updatedAt
+      submittedAt
+      pendingVersionId
+      submitter {
+        id
+        name
+        email
+      }
+    }
+  }
+}
+

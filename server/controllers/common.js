@@ -56,6 +56,59 @@ router.get(['/a', '/a/*'], (req, res, next) => {
 })
 
 /**
+ * Approvals - Edit helper
+ */
+router.get('/approvals/:id/edit', async (req, res, next) => {
+  const pageId = _.toSafeInteger(req.params.id)
+
+  if (!WIKI.auth.checkAccess(req.user, ['approve:pages', 'manage:pages', 'manage:system'])) {
+    _.set(res.locals, 'pageMeta.title', 'Unauthorized')
+    return res.status(403).render('unauthorized', { action: 'view' })
+  }
+
+  if (!pageId || pageId <= 0) {
+    return res.status(400).render('error', { error: new Error('Invalid page id.') })
+  }
+
+  try {
+    const page = await WIKI.models.pages.query().findById(pageId)
+    if (!page) {
+      return res.status(404).render('error', { error: new Error('Page not found.') })
+    }
+
+    if (!WIKI.auth.checkAccess(req.user, ['write:pages', 'manage:pages', 'manage:system'], {
+      locale: page.localeCode,
+      path: page.path
+    })) {
+      _.set(res.locals, 'pageMeta.title', 'Unauthorized')
+      return res.status(403).render('unauthorized', { action: 'edit' })
+    }
+
+    const queryParams = new URLSearchParams()
+    queryParams.set('from', 'approvals')
+    if (page.pendingVersionId) {
+      queryParams.set('pendingVersion', String(page.pendingVersionId))
+    }
+    return res.redirect(`/e/${page.localeCode}/${page.path}?${queryParams.toString()}`)
+  } catch (err) {
+    return next(err)
+  }
+})
+
+/**
+ * Approvals Workspace
+ */
+router.get(['/approvals', '/approvals/*'], (req, res, next) => {
+  if (!WIKI.auth.checkAccess(req.user, ['approve:pages', 'manage:pages', 'manage:system'])) {
+    _.set(res.locals, 'pageMeta.title', 'Unauthorized')
+    return res.status(403).render('unauthorized', { action: 'view' })
+  }
+
+  _.set(res.locals, 'pageMeta.title', 'Page Moderators')
+  return res.render('approvals')
+})
+
+/**
  * Download Page / Version
  */
 router.get(['/d', '/d/*'], async (req, res, next) => {
@@ -138,19 +191,126 @@ router.get(['/e', '/e/*'], async (req, res, next) => {
     body: WIKI.config.theming.injectBody
   }
 
+  const hasWritePermission = _.get(effectivePermissions, 'pages.write', false) || _.get(effectivePermissions, 'pages.manage', false)
+  const hasApprovalAccess = WIKI.auth.checkAccess(req.user, ['approve:pages', 'manage:pages', 'manage:system'], pageArgs)
+  const pendingVersionParam = _.toSafeInteger(_.get(req, 'query.pendingVersion', _.get(req, 'query.pending', 0)))
+  const originSource = _.toString(_.get(req, 'query.from', '')).toLowerCase()
+  const preferPendingVersion = hasApprovalAccess && (pendingVersionParam > 0 || originSource === 'approvals')
+
   if (page) {
+    const canEditAsApprover = hasApprovalAccess && (page.pendingVersionId || pendingVersionParam > 0)
+
     // -> EDIT MODE
-    if (!(effectivePermissions.pages.write || effectivePermissions.pages.manage)) {
+    if (!hasWritePermission && !canEditAsApprover) {
       _.set(res.locals, 'pageMeta.title', 'Unauthorized')
       return res.render('unauthorized', { action: 'edit' })
     }
 
-    // -> Get page tags
-    await page.$relatedQuery('tags')
-    page.tags = _.map(page.tags, 'tag')
+    let liveTags = []
+    if (typeof page.$relatedQuery === 'function') {
+      await page.$relatedQuery('tags')
+      liveTags = _.map(page.tags, 'tag')
+      page.tags = liveTags
+    }
+
+    // -> Load approver information if available
+    if (page.approverId) {
+      const approver = await WIKI.models.users.query().findById(page.approverId).select('name', 'email')
+      if (approver) {
+        page.approverName = approver.name
+        page.approverEmail = approver.email
+      }
+    }
+
+    // -> Set defaults for approval fields if not present
+    page.approvalStatus = page.approvalStatus || 'approved'
+    page.approvalComment = page.approvalComment || ''
+    page.approverName = page.approverName || ''
+    page.approverEmail = page.approverEmail || ''
 
     // Handle missing extra field
     page.extra = page.extra || { css: '', js: '' }
+
+    if (!_.isPlainObject(page.extra)) {
+      try {
+        page.extra = JSON.parse(page.extra)
+      } catch (err) {
+        page.extra = { css: '', js: '' }
+      }
+    }
+    page.extra.css = _.get(page.extra, 'css', '')
+    page.extra.js = _.get(page.extra, 'js', '')
+
+    let usingPendingVersion = false
+    if (preferPendingVersion && (pendingVersionParam > 0 || page.pendingVersionId)) {
+      const pendingVersionId = pendingVersionParam > 0 ? pendingVersionParam : page.pendingVersionId
+      if (pendingVersionId) {
+        const pending = await WIKI.models.pageHistory.query()
+          .alias('ph')
+          .leftJoin({ author: 'users' }, 'author.id', 'ph.authorId')
+          .select(
+            { versionId: 'ph.id' },
+            'ph.title',
+            'ph.description',
+            'ph.content',
+            'ph.contentType',
+            'ph.editorKey',
+            'ph.isPublished',
+            'ph.isPrivate',
+            'ph.publishStartDate',
+            'ph.publishEndDate',
+            'ph.createdAt',
+            'ph.versionDate',
+            'ph.extra',
+            { authorId: 'author.id' },
+            { authorName: 'author.name' },
+            { authorEmail: 'author.email' }
+          )
+          .where('ph.id', pendingVersionId)
+          .andWhere('ph.pageId', page.id)
+          .first()
+
+        if (pending) {
+          usingPendingVersion = true
+          let pendingExtra = pending.extra || {}
+          if (_.isString(pendingExtra)) {
+            try {
+              pendingExtra = JSON.parse(pendingExtra)
+            } catch (err) {
+              pendingExtra = {}
+            }
+          }
+          let historyTags = []
+          try {
+            historyTags = await WIKI.models.tags.getHistoryTags(pending.versionId)
+          } catch (err) {
+            historyTags = []
+          }
+
+          page.title = pending.title || page.title
+          page.description = pending.description || page.description
+          page.content = pending.content || page.content
+          page.contentType = pending.contentType || page.contentType
+          page.editorKey = pending.editorKey || page.editorKey
+          page.publishStartDate = pending.publishStartDate || ''
+          page.publishEndDate = pending.publishEndDate || ''
+          page.isPublished = (pending.isPublished === true || pending.isPublished === 1) ? 'true' : 'false'
+          page.pendingVersionId = pending.versionId || page.pendingVersionId
+          page.approvalStatus = 'pending'
+          page.extra = {
+            css: _.get(pendingExtra, 'css', ''),
+            js: _.get(pendingExtra, 'js', '')
+          }
+          page.tags = historyTags.map(t => t.tag)
+          page.updatedAt = pending.versionDate || pending.createdAt || page.updatedAt
+        }
+      }
+    }
+
+    if (!usingPendingVersion) {
+      page.tags = liveTags
+      page.isPublished = (page.isPublished === true || page.isPublished === 1) ? 'true' : 'false'
+    }
 
     // -> Beautify Script CSS
     if (!_.isEmpty(page.extra.css)) {
@@ -160,8 +320,9 @@ router.get(['/e', '/e/*'], async (req, res, next) => {
     _.set(res.locals, 'pageMeta.title', `Edit ${page.title}`)
     _.set(res.locals, 'pageMeta.description', page.description)
     page.mode = 'update'
-    page.isPublished = (page.isPublished === true || page.isPublished === 1) ? 'true' : 'false'
-    page.content = Buffer.from(page.content).toString('base64')
+    const initialContent = page.content || ''
+    page.content = Buffer.from(initialContent).toString('base64')
+    page.origin = preferPendingVersion ? 'approvals' : originSource
   } else {
     // -> CREATE MODE
     if (!effectivePermissions.pages.write) {
@@ -182,7 +343,8 @@ router.get(['/e', '/e/*'], async (req, res, next) => {
       extra: {
         css: '',
         js: ''
-      }
+      },
+      origin: originSource
     }
 
     // -> From Template

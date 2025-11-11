@@ -82,7 +82,7 @@ module.exports = {
           const strategy = require(`../modules/authentication/${stg.strategyKey}/authentication.js`)
 
           stg.config.callbackURL = `${WIKI.config.host}/login/${stg.key}/callback`
-          stg.config.key = stg.key;
+          stg.config.key = stg.key
           strategy.init(passport, stg.config)
           strategy.config = stg.config
 
@@ -466,6 +466,8 @@ module.exports = {
         read: WIKI.auth.checkAccess(req.user, ['read:pages'], page),
         write: WIKI.auth.checkAccess(req.user, ['write:pages'], page),
         manage: WIKI.auth.checkAccess(req.user, ['manage:pages'], page),
+        approve: WIKI.auth.checkAccess(req.user, ['approve:pages', 'manage:pages'], page),
+        publish: WIKI.auth.checkAccess(req.user, ['publish:pages', 'approve:pages', 'manage:pages'], page),
         delete: WIKI.auth.checkAccess(req.user, ['delete:pages'], page),
         script: WIKI.auth.checkAccess(req.user, ['write:scripts'], page),
         style: WIKI.auth.checkAccess(req.user, ['write:styles'], page)

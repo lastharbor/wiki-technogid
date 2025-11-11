@@ -97,9 +97,10 @@
               :label='$t(`editor:props.publishToggle`)'
               v-model='isPublished'
               color='primary'
-              :hint='$t(`editor:props.publishToggleHint`)'
+              :hint='hasPublishPermission ? $t(`editor:props.publishToggleHint`) : "Publishing is restricted to users with publish rights."'
               persistent-hint
               inset
+              :disabled='!hasPublishPermission'
               )
           v-divider
           v-card-text.grey.pt-5(:class='$vuetify.theme.dark ? `darken-3-d3` : `lighten-5`')
@@ -255,7 +256,7 @@ import 'codemirror/mode/htmlmixed/htmlmixed.js'
 import 'codemirror/mode/css/css.js'
 
 /* global siteLangs, siteConfig */
-const filenamePattern = /^(?![\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s])(?!.*[\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]$)[^\#\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]*$/
+const filenamePattern = /^(?![#/.$^=*;:&?()\[\]{}"'><,@!%`~\s])(?!.*[#/.$^=*;:&?()\[\]{}"'><,@!%`~\s]$)[^#.$^=*;:&?()\[\]{}"'><,@!%`~\s]*$/
 
 export default {
   props: {
@@ -276,10 +277,10 @@ export default {
       currentTab: 0,
       cm: null,
       rules: {
-          required: value => !!value || 'This field is required.',
-          path: value => {
-            return filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
-          }
+        required: value => !!value || 'This field is required.',
+        path: value => {
+          return filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
+        }
       }
     }
   },
@@ -301,6 +302,7 @@ export default {
     scriptCss: sync('page/scriptCss'),
     hasScriptPermission: get('page/effectivePermissions@pages.script'),
     hasStylePermission: get('page/effectivePermissions@pages.style'),
+    hasPublishPermission: get('page/effectivePermissions@pages.publish'),
     pageSelectorMode () {
       return (this.mode === 'create') ? 'create' : 'move'
     }

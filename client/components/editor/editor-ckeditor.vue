@@ -29,6 +29,10 @@ export default {
     EditorConflict
   },
   props: {
+    openReviewerComments: {
+      type: Function,
+      default: null
+    },
     save: {
       type: Function,
       default: () => {}
@@ -50,11 +54,19 @@ export default {
     isMobile() {
       return this.$vuetify.breakpoint.smAndDown
     },
+    hasReviewerNotes() {
+      return typeof this.openReviewerComments === 'function'
+    },
     locale: get('page/locale'),
     path: get('page/path'),
     activeModal: sync('editor/activeModal')
   },
   methods: {
+    showReviewerNotes() {
+      if (typeof this.openReviewerComments === 'function') {
+        this.openReviewerComments()
+      }
+    },
     insertLink () {
       this.insertLinkDialog = true
     },
@@ -124,7 +136,7 @@ export default {
     })
 
     // Handle save conflict
-    this.$root.$on('saveConflict', () => {
+    this.$root.$on('save-conflict', () => {
       this.isConflict = true
     })
     this.$root.$on('overwriteEditorContent', () => {
@@ -161,6 +173,16 @@ $editor-height-mobile: calc(100vh - 56px - 16px);
   @include until($tablet) {
     height: $editor-height-mobile;
     max-height: $editor-height-mobile;
+  }
+
+  &-actions {
+    display: flex;
+    justify-content: flex-end;
+    background-color: mc('grey', '200');
+
+    @at-root .theme--dark & {
+      background-color: mc('grey', '900');
+    }
   }
 
   &-sysbar {

@@ -1,0 +1,21 @@
+mutation ($id: Int!, $comment: String) {
+  pages {
+    reject(id: $id, comment: $comment) {
+      responseResult {
+        succeeded
+        errorCode
+        message
+      }
+      page {
+        id
+        approvalStatus
+        approvalComment
+        pendingVersionId
+        approverName
+        approverEmail
+        updatedAt
+      }
+    }
+  }
+}
+

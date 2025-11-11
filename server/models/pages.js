@@ -30,6 +30,48 @@ const punctuationRegex = /[!,:;/\\_+\-=()&#@<>$~%^*[\]{}"'|]+|(\.\s)|(\s\.)/ig
 module.exports = class Page extends Model {
   static get tableName() { return 'pages' }
 
+  static extractFrontmatter(rawContent = '', contentType = 'markdown') {
+    if (!_.isString(rawContent) || _.isEmpty(rawContent)) {
+      return {
+        body: rawContent || '',
+        data: null
+      }
+    }
+
+    const normalizedType = _.toString(contentType).toLowerCase()
+    if (!normalizedType.includes('markdown') && normalizedType !== 'md') {
+      return {
+        body: rawContent,
+        data: null
+      }
+    }
+
+    const frontmatterPattern = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/
+    const match = rawContent.match(frontmatterPattern)
+    if (!match) {
+      return {
+        body: rawContent,
+        data: null
+      }
+    }
+
+    let data = null
+    try {
+      data = yaml.safeLoad(match[1]) || {}
+    } catch (err) {
+      data = null
+      if (typeof WIKI !== 'undefined' && _.get(WIKI, 'logger.warn')) {
+        WIKI.logger.warn('Invalid YAML frontmatter detected while parsing content.', err)
+      }
+    }
+
+    const body = rawContent.slice(match[0].length)
+    return {
+      body,
+      data
+    }
+  }
+
   static get jsonSchema () {
     return {
       type: 'object',
@@ -47,6 +89,10 @@ module.exports = class Page extends Model {
         publishEndDate: {type: 'string'},
         content: {type: 'string'},
         contentType: {type: 'string'},
+        approvalStatus: {type: 'string'},
+        pendingVersionId: {type: ['integer', 'null']},
+        approvalComment: {type: 'string'},
+        approverId: {type: ['integer', 'null']},
 
         createdAt: {type: 'string'},
         updatedAt: {type: 'string'}
@@ -111,6 +157,14 @@ module.exports = class Page extends Model {
           from: 'pages.localeCode',
           to: 'locales.code'
         }
+      },
+      approver: {
+        relation: Model.BelongsToOneRelation,
+        modelClass: require('./users'),
+        join: {
+          from: 'pages.approverId',
+          to: 'users.id'
+        }
       }
     }
   }
@@ -160,6 +214,7 @@ module.exports = class Page extends Model {
         js: 'string',
         css: 'string'
       },
+      approvalStatus: 'string',
       title: 'string',
       toc: 'string',
       updatedAt: 'string'
@@ -295,6 +350,13 @@ module.exports = class Page extends Model {
       scriptJs = opts.scriptJs || ''
     }
 
+    const canPublish = WIKI.auth.checkAccess(opts.user, ['publish:pages', 'approve:pages', 'manage:pages'], {
+      locale: opts.locale,
+      path: opts.path
+    })
+    const approvalStatus = canPublish ? 'approved' : 'pending'
+    const newTags = Array.isArray(opts.tags) ? opts.tags : []
+
     // -> Create page
     await WIKI.models.pages.query().insert({
       authorId: opts.user.id,
@@ -305,7 +367,7 @@ module.exports = class Page extends Model {
       editorKey: opts.editor,
       hash: pageHelper.generateHash({ path: opts.path, locale: opts.locale, privateNS: opts.isPrivate ? 'TODO' : '' }),
       isPrivate: opts.isPrivate,
-      isPublished: opts.isPublished,
+      isPublished: canPublish ? (opts.isPublished === true || opts.isPublished === 1) : false,
       localeCode: opts.locale,
       path: opts.path,
       publishEndDate: opts.publishEndDate || '',
@@ -315,7 +377,11 @@ module.exports = class Page extends Model {
       extra: JSON.stringify({
         js: scriptJs,
         css: scriptCss
-      })
+      }),
+      approvalStatus,
+      pendingVersionId: null,
+      approvalComment: '',
+      approverId: canPublish ? opts.user.id : null
     })
     const page = await WIKI.models.pages.getPageFromDb({
       path: opts.path,
@@ -323,10 +389,58 @@ module.exports = class Page extends Model {
       userId: opts.user.id,
       isPrivate: opts.isPrivate
     })
+    page.locale = page.localeCode
+    page.editor = page.editorKey
+    page.scriptJs = _.get(page.extra, 'js', '')
+    page.scriptCss = _.get(page.extra, 'css', '')
 
     // -> Save Tags
-    if (opts.tags && opts.tags.length > 0) {
-      await WIKI.models.tags.associateTags({ tags: opts.tags, page })
+    if (approvalStatus === 'approved') {
+      if (newTags.length > 0) {
+        await WIKI.models.tags.associateTags({ tags: newTags, page })
+      }
+    } else {
+      let pageExtra = page.extra || {}
+      if (_.isString(pageExtra)) {
+        try {
+          pageExtra = JSON.parse(pageExtra)
+        } catch (err) {
+          pageExtra = {}
+        }
+      }
+
+      const pendingVersion = await WIKI.models.pageHistory.addVersion({
+        ...page,
+        authorId: opts.user.id,
+        content: opts.content,
+        description: opts.description,
+        title: opts.title,
+        publishStartDate: opts.publishStartDate || '',
+        publishEndDate: opts.publishEndDate || '',
+        editorKey: opts.editor,
+        action: 'submitted',
+        workflowStatus: 'pending',
+        versionDate: new Date().toISOString(),
+        tags: newTags,
+        extra: {
+          ...pageExtra,
+          js: scriptJs,
+          css: scriptCss
+        }
+      })
+
+      await WIKI.models.pages.query().patch({
+        pendingVersionId: pendingVersion.id,
+        approvalStatus: 'pending',
+        approvalComment: '',
+        approverId: null
+      }).where('id', page.id)
+
+      page.pendingVersionId = pendingVersion.id
+      page.approvalStatus = 'pending'
+      page.approvalComment = ''
+      page.approverId = null
+      page.tags = newTags.map(tag => ({ tag, title: tag }))
     }
 
     // -> Render page to HTML
@@ -335,17 +449,19 @@ module.exports = class Page extends Model {
     // -> Rebuild page tree
     await WIKI.models.pages.rebuildTree()
 
-    // -> Add to Search Index
-    const pageContents = await WIKI.models.pages.query().findById(page.id).select('render')
-    page.safeContent = WIKI.models.pages.cleanHTML(pageContents.render)
-    await WIKI.data.searchEngine.created(page)
+    if (approvalStatus === 'approved') {
+      // -> Add to Search Index
+      const pageContents = await WIKI.models.pages.query().findById(page.id).select('render')
+      page.safeContent = WIKI.models.pages.cleanHTML(pageContents.render)
+      await WIKI.data.searchEngine.created(page)
 
-    // -> Add to Storage
-    if (!opts.skipStorage) {
-      await WIKI.models.storage.pageEvent({
-        event: 'created',
-        page
-      })
+      // -> Add to Storage
+      if (!opts.skipStorage) {
+        await WIKI.models.storage.pageEvent({
+          event: 'created',
+          page
+        })
+      }
     }
 
     // -> Reconnect Links
@@ -374,11 +490,17 @@ module.exports = class Page extends Model {
       throw new Error('Invalid Page Id')
     }
 
-    // -> Check for page access
-    if (!WIKI.auth.checkAccess(opts.user, ['write:pages'], {
+    const hasWriteAccess = WIKI.auth.checkAccess(opts.user, ['write:pages'], {
       locale: ogPage.localeCode,
       path: ogPage.path
-    })) {
+    })
+
+    const hasApprovalAccess = WIKI.auth.checkAccess(opts.user, ['approve:pages', 'manage:pages', 'manage:system'], {
+      locale: ogPage.localeCode,
+      path: ogPage.path
+    })
+
+    if (!hasWriteAccess && !(hasApprovalAccess && ogPage.pendingVersionId)) {
       throw new WIKI.Error.PageUpdateForbidden()
     }
 
@@ -387,17 +509,24 @@ module.exports = class Page extends Model {
       throw new WIKI.Error.PageEmptyContent()
     }
 
-    // -> Create version snapshot
-    await WIKI.models.pageHistory.addVersion({
-      ...ogPage,
-      isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
-      action: opts.action ? opts.action : 'updated',
-      versionDate: ogPage.updatedAt
+    const forcePending = opts.keepPending === true || opts.keepPending === 'true'
+
+    const canApprove = WIKI.auth.checkAccess(opts.user, ['approve:pages', 'manage:pages'], {
+      path: ogPage.path,
+      locale: ogPage.localeCode
+    })
+    const canPublish = hasWriteAccess && WIKI.auth.checkAccess(opts.user, ['publish:pages', 'approve:pages', 'manage:pages'], {
+      path: ogPage.path,
+      locale: ogPage.localeCode
     })
 
     // -> Format Extra Properties
     if (!_.isPlainObject(ogPage.extra)) {
-      ogPage.extra = {}
+      try {
+        ogPage.extra = JSON.parse(ogPage.extra || '{}')
+      } catch (err) {
+        ogPage.extra = {}
+      }
     }
 
     // -> Format CSS Scripts
@@ -422,7 +551,93 @@ module.exports = class Page extends Model {
       scriptJs = opts.scriptJs || ''
     }
 
-    // -> Update page
+    const newContentType = _.get(_.find(WIKI.data.editors, ['key', opts.editor || ogPage.editorKey]), `contentType`, 'text')
+    const newTags = Array.isArray(opts.tags) ? opts.tags : []
+
+    if (!canPublish || forcePending) {
+      let pendingVersionId = ogPage.pendingVersionId
+      const pendingApprovalComment = Object.prototype.hasOwnProperty.call(opts, 'approvalComment')
+        ? opts.approvalComment
+        : ogPage.approvalComment
+      const pendingExtra = {
+        ...ogPage.extra,
+        js: scriptJs,
+        css: scriptCss,
+        approvalComment: pendingApprovalComment || ''
+      }
+      const pendingData = {
+        ...ogPage,
+        content: opts.content,
+        description: opts.description,
+        title: opts.title,
+        publishStartDate: opts.publishStartDate || '',
+        publishEndDate: opts.publishEndDate || '',
+        contentType: newContentType,
+        editorKey: opts.editor || ogPage.editorKey,
+        action: 'submitted',
+        workflowStatus: 'pending',
+        versionDate: new Date().toISOString(),
+        authorId: opts.user.id,
+        extra: pendingExtra,
+        tags: newTags,
+        approvalComment: pendingApprovalComment
+      }
+
+      if (pendingVersionId) {
+        const serializedPendingExtra = WIKI.config.db.type === 'sqlite'
+          ? JSON.stringify(pendingExtra)
+          : pendingExtra
+        await WIKI.models.pageHistory.query().patch({
+          content: pendingData.content,
+          description: pendingData.description,
+          title: pendingData.title,
+          publishStartDate: pendingData.publishStartDate,
+          publishEndDate: pendingData.publishEndDate,
+          contentType: pendingData.contentType,
+          editorKey: pendingData.editorKey,
+          authorId: pendingData.authorId,
+          workflowStatus: 'pending',
+          action: 'submitted',
+          extra: serializedPendingExtra
+        }).where('id', pendingVersionId)
+        await WIKI.models.tags.associateHistoryTags({ tags: newTags, versionId: pendingVersionId })
+      } else {
+        const pendingVersion = await WIKI.models.pageHistory.addVersion({
+          ...pendingData,
+          extra: pendingData.extra
+        })
+        pendingVersionId = pendingVersion.id
+      }
+
+      await WIKI.models.pages.query().patch({
+        approvalStatus: 'pending',
+        pendingVersionId,
+        approverId: null,
+        approvalComment: pendingApprovalComment
+      }).where('id', ogPage.id)
+
+      const pagePending = await WIKI.models.pages.getPageFromDb(ogPage.id)
+      pagePending.approvalStatus = 'pending'
+      pagePending.pendingVersionId = pendingVersionId
+      pagePending.locale = pagePending.localeCode
+      pagePending.editor = pagePending.editorKey
+      pagePending.scriptJs = _.get(pagePending.extra, 'js', '')
+      pagePending.scriptCss = _.get(pagePending.extra, 'css', '')
+      return pagePending
+    }
+
+    // -> Create version snapshot for approved update
+    const currentTags = await ogPage.$relatedQuery('tags')
+    await WIKI.models.pageHistory.addVersion({
+      ...ogPage,
+      isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+      action: opts.action ? opts.action : 'updated',
+      versionDate: ogPage.updatedAt,
+      tags: currentTags.map(t => t.tag),
+      extra: ogPage.extra
+    })
+
+    // -> Update page (approved path)
     await WIKI.models.pages.query().patch({
       authorId: opts.user.id,
       content: opts.content,
@@ -431,16 +646,35 @@ module.exports = class Page extends Model {
       publishEndDate: opts.publishEndDate || '',
       publishStartDate: opts.publishStartDate || '',
       title: opts.title,
+      approvalStatus: 'approved',
+      pendingVersionId: null,
+      approverId: canApprove ? opts.user.id : (canPublish ? opts.user.id : null),
+      approvalComment: opts.approvalComment || '',
+      editorKey: opts.editor || ogPage.editorKey,
+      contentType: newContentType,
       extra: JSON.stringify({
         ...ogPage.extra,
         js: scriptJs,
         css: scriptCss
       })
     }).where('id', ogPage.id)
+
+    if (ogPage.pendingVersionId) {
+      await WIKI.models.pageHistory.query().patch({
+        workflowStatus: 'approved',
+        action: 'approved',
+        versionDate: new Date().toISOString()
+      }).where('id', ogPage.pendingVersionId)
+    }
+
     let page = await WIKI.models.pages.getPageFromDb(ogPage.id)
+    page.locale = page.localeCode
+    page.editor = page.editorKey
+    page.scriptJs = _.get(page.extra, 'js', '')
+    page.scriptCss = _.get(page.extra, 'css', '')
 
     // -> Save Tags
-    await WIKI.models.tags.associateTags({ tags: opts.tags, page })
+    await WIKI.models.tags.associateTags({ tags: newTags, page })
 
     // -> Render page to HTML
     await WIKI.models.pages.renderPage(page)
@@ -486,6 +720,305 @@ module.exports = class Page extends Model {
     page.updatedAt = await WIKI.models.pages.query().findById(page.id).select('updatedAt').then(r => r.updatedAt)
 
     return page
+  }
+
+  static async approvePending({ id, user, comment = '', publish = true }) {
+    const page = await WIKI.models.pages.query().findById(id)
+    if (!page) {
+      throw new WIKI.Error.PageNotFound()
+    }
+
+    if (!WIKI.auth.checkAccess(user, ['approve:pages', 'manage:pages'], {
+      locale: page.localeCode,
+      path: page.path
+    })) {
+      throw new WIKI.Error.PageUpdateForbidden()
+    }
+
+    let pendingVersion = null
+    let historyTags = []
+
+    if (page.pendingVersionId) {
+      pendingVersion = await WIKI.models.pageHistory.query()
+        .select([
+          'pageHistory.id',
+          'pageHistory.content',
+          'pageHistory.contentType',
+          'pageHistory.description',
+          'pageHistory.editorKey',
+          'pageHistory.publishEndDate',
+          'pageHistory.publishStartDate',
+          'pageHistory.title',
+          'pageHistory.authorId',
+          'pageHistory.extra'
+        ])
+        .where('pageHistory.id', page.pendingVersionId)
+        .first()
+
+      if (!pendingVersion) {
+        await WIKI.models.pages.query().patch({
+          approvalStatus: 'approved',
+          pendingVersionId: null
+        }).where('id', id)
+        throw new Error('Pending version content was not found.')
+      }
+
+      historyTags = await WIKI.models.tags.getHistoryTags(pendingVersion.id)
+    } else {
+      let existingExtra = page.extra || {}
+      if (_.isString(existingExtra)) {
+        try {
+          existingExtra = JSON.parse(existingExtra)
+        } catch (err) {
+          existingExtra = {}
+        }
+      }
+
+      pendingVersion = {
+        id: null,
+        content: page.content,
+        contentType: page.contentType,
+        description: page.description,
+        editorKey: page.editorKey,
+        publishEndDate: page.publishEndDate,
+        publishStartDate: page.publishStartDate,
+        title: page.title,
+        authorId: page.authorId,
+        extra: existingExtra
+      }
+
+      historyTags = await WIKI.models.knex('pageTags')
+        .join('tags', 'pageTags.tagId', 'tags.id')
+        .where('pageTags.pageId', page.id)
+        .select('tags.tag')
+        .then(rows => rows.map(r => r.tag))
+    }
+
+    let pendingExtra = pendingVersion.extra
+    if (_.isString(pendingExtra)) {
+      try {
+        pendingExtra = JSON.parse(pendingExtra)
+      } catch (err) {
+        pendingExtra = {}
+      }
+    }
+    const pendingHistoryExtra = {
+      ...pendingExtra,
+      approvalComment: comment || ''
+    }
+
+    let currentExtra
+    if (_.isString(page.extra)) {
+      try {
+        currentExtra = JSON.parse(page.extra || '{}')
+      } catch (err) {
+        currentExtra = {}
+      }
+    } else {
+      currentExtra = page.extra || {}
+    }
+
+    const mergedExtra = {
+      ...currentExtra,
+      ...pendingExtra
+    }
+
+    const currentPublished = page.isPublished === true || page.isPublished === 1 || page.isPublished === '1'
+
+    await WIKI.models.pages.query().patch({
+      content: pendingVersion.content,
+      description: pendingVersion.description,
+      contentType: pendingVersion.contentType,
+      editorKey: pendingVersion.editorKey,
+      publishStartDate: pendingVersion.publishStartDate || '',
+      publishEndDate: pendingVersion.publishEndDate || '',
+      title: pendingVersion.title,
+      authorId: pendingVersion.authorId || page.authorId,
+      isPublished: publish ? true : currentPublished,
+      approvalStatus: 'approved',
+      pendingVersionId: null,
+      approvalComment: comment,
+      approverId: user.id,
+      extra: JSON.stringify(mergedExtra)
+    }).where('id', id)
+
+    if (pendingVersion.id) {
+      const serializedPendingExtra = WIKI.config.db.type === 'sqlite'
+        ? JSON.stringify(pendingHistoryExtra)
+        : pendingHistoryExtra
+      await WIKI.models.pageHistory.query().patch({
+        workflowStatus: 'approved',
+        action: 'approved',
+        versionDate: new Date().toISOString(),
+        extra: serializedPendingExtra
+      }).where('id', pendingVersion.id)
+    }
+
+    // Fetch as Objection model instance to support $relatedQuery
+    const updatedPageModel = await WIKI.models.pages.query().findById(id)
+
+    const updatedPageRaw = await WIKI.models.pages.getPageFromDb(id)
+
+    let updatedExtra = updatedPageRaw.extra || {}
+    if (_.isString(updatedExtra)) {
+      try {
+        updatedExtra = JSON.parse(updatedExtra)
+      } catch (err) {
+        updatedExtra = {}
+      }
+    }
+
+    const updatedPage = {
+      ...updatedPageRaw,
+      locale: updatedPageRaw.localeCode,
+      editor: updatedPageRaw.editorKey,
+      scriptJs: _.get(updatedExtra, 'js', ''),
+      scriptCss: _.get(updatedExtra, 'css', ''),
+      isPublished: updatedPageRaw.isPublished === true || updatedPageRaw.isPublished === 1,
+      isPrivate: updatedPageRaw.isPrivate === true || updatedPageRaw.isPrivate === 1,
+      extra: updatedExtra
+    }
+
+    const historyTagValues = Array.isArray(historyTags) ? historyTags.map(t => t.tag || t) : []
+    await WIKI.models.tags.associateTags({ tags: historyTagValues, page: updatedPageModel })
+
+    await WIKI.models.pages.renderPage(updatedPage)
+    WIKI.events.outbound.emit('deletePageFromCache', updatedPage.hash)
+
+    const pageContents = await WIKI.models.pages.query().findById(updatedPage.id).select('render')
+    updatedPage.safeContent = WIKI.models.pages.cleanHTML(pageContents.render)
+    await WIKI.data.searchEngine.updated(updatedPage)
+
+    await WIKI.models.storage.pageEvent({
+      event: 'updated',
+      page: updatedPage
+    })
+
+    return updatedPage
+  }
+
+  static async rejectPending({ id, user, comment = '' }) {
+    const page = await WIKI.models.pages.query().findById(id)
+    if (!page) {
+      throw new WIKI.Error.PageNotFound()
+    }
+
+    if (!WIKI.auth.checkAccess(user, ['approve:pages', 'manage:pages'], {
+      locale: page.localeCode,
+      path: page.path
+    })) {
+      throw new WIKI.Error.PageUpdateForbidden()
+    }
+
+    if (!page.pendingVersionId) {
+      throw new Error('No pending version to reject for this page.')
+    }
+
+    const pendingVersion = await WIKI.models.pageHistory.query()
+      .select(['pageHistory.id', 'pageHistory.extra'])
+      .where('pageHistory.id', page.pendingVersionId)
+      .first()
+
+    let pendingExtra = _.get(pendingVersion, 'extra', {})
+    if (_.isString(pendingExtra)) {
+      try {
+        pendingExtra = JSON.parse(pendingExtra)
+      } catch (err) {
+        pendingExtra = {}
+      }
+    }
+    pendingExtra = {
+      ...pendingExtra,
+      approvalComment: comment || ''
+    }
+
+    await WIKI.models.pages.query().patch({
+      approvalStatus: 'rejected',
+      pendingVersionId: null,
+      approvalComment: comment,
+      approverId: user.id
+    }).where('id', id)
+
+    const serializedPendingExtra = WIKI.config.db.type === 'sqlite'
+      ? JSON.stringify(pendingExtra)
+      : pendingExtra
+
+    await WIKI.models.pageHistory.query().patch({
+      workflowStatus: 'rejected',
+      action: 'rejected',
+      versionDate: new Date().toISOString(),
+      extra: serializedPendingExtra
+    }).where('id', page.pendingVersionId)
+
+    const updatedPage = await WIKI.models.pages.getPageFromDb(id)
+    updatedPage.locale = updatedPage.localeCode
+    updatedPage.editor = updatedPage.editorKey
+    updatedPage.scriptJs = _.get(updatedPage.extra, 'js', '')
+    updatedPage.scriptCss = _.get(updatedPage.extra, 'css', '')
+
+    return updatedPage
+  }
+
+  static async cancelPending({ id, user }) {
+    const page = await WIKI.models.pages.query().findById(id)
+    if (!page) {
+      throw new WIKI.Error.PageNotFound()
+    }
+
+    if (!page.pendingVersionId) {
+      return WIKI.models.pages.getPageFromDb(id)
+    }
+
+    if (page.authorId !== user.id && !WIKI.auth.checkAccess(user, ['manage:pages'], {
+      locale: page.localeCode,
+      path: page.path
+    })) {
+      throw new WIKI.Error.PageUpdateForbidden()
+    }
+
+    const pendingVersion = await WIKI.models.pageHistory.query()
+      .select(['pageHistory.id', 'pageHistory.extra'])
+      .where('pageHistory.id', page.pendingVersionId)
+      .first()
+
+    let pendingExtra = _.get(pendingVersion, 'extra', {})
+    if (_.isString(pendingExtra)) {
+      try {
+        pendingExtra = JSON.parse(pendingExtra)
+      } catch (err) {
+        pendingExtra = {}
+      }
+    }
+    pendingExtra = {
+      ...pendingExtra,
+      approvalComment: ''
+    }
+
+    await WIKI.models.pages.query().patch({
+      approvalStatus: 'draft',
+      pendingVersionId: null,
+      approvalComment: '',
+      approverId: null
+    }).where('id', id)
+
+    const serializedPendingExtra = WIKI.config.db.type === 'sqlite'
+      ? JSON.stringify(pendingExtra)
+      : pendingExtra
+
+    await WIKI.models.pageHistory.query().patch({
+      workflowStatus: 'cancelled',
+      action: 'cancelled',
+      versionDate: new Date().toISOString(),
+      extra: serializedPendingExtra
+    }).where('id', page.pendingVersionId)
+
+    const updatedPage = await WIKI.models.pages.getPageFromDb(id)
+    updatedPage.locale = updatedPage.localeCode
+    updatedPage.editor = updatedPage.editorKey
+    updatedPage.scriptJs = _.get(updatedPage.extra, 'js', '')
+    updatedPage.scriptCss = _.get(updatedPage.extra, 'css', '')
+
+    return updatedPage
   }
 
   /**
@@ -928,6 +1461,100 @@ module.exports = class Page extends Model {
     return rebuildJob.finished
   }
 
+  static async renderPreview({ content, contentType, pageContext = {} }) {
+    const normalizedContentType = contentType || _.get(pageContext, 'contentType', 'markdown')
+    await WIKI.models.renderers.fetchDefinitions()
+    const pipeline = await WIKI.models.renderers.getRenderingPipeline(normalizedContentType)
+    const { body: preparedContent, data: frontmatterData } = Page.extractFrontmatter(content || '', normalizedContentType)
+
+    const toPlainObject = (modelInstance) => {
+      if (!modelInstance) {
+        return {}
+      }
+      if (typeof modelInstance.toJSON === 'function') {
+        return modelInstance.toJSON()
+      }
+      if (typeof modelInstance === 'object') {
+        return _.cloneDeep(modelInstance)
+      }
+      return {}
+    }
+
+    const createStubQuery = (rows = []) => {
+      const data = Array.isArray(rows) ? rows : []
+      const promise = Promise.resolve(data)
+      const noop = () => promise
+      promise.select = noop
+      promise.where = noop
+      promise.whereIn = noop
+      promise.orderBy = noop
+      promise.limit = noop
+      promise.clone = noop
+      promise.modify = noop
+      promise.withGraphFetched = noop
+      promise.first = () => Promise.resolve(data.length > 0 ? data[0] : null)
+      promise.context = noop
+      promise.throwIfNotFound = noop
+      return promise
+    }
+
+    let dbPage = null
+    if (pageContext && pageContext.id) {
+      try {
+        dbPage = await WIKI.models.pages.query().findById(pageContext.id)
+      } catch (err) {
+        WIKI.logger.debug('renderPreview: unable to fetch page model', err)
+      }
+    }
+
+    const pageForRenderer = {
+      ...toPlainObject(dbPage),
+      ...(_.isPlainObject(pageContext) ? pageContext : {}),
+      id: _.get(pageContext, 'id', _.get(dbPage, 'id', null)),
+      isPreview: true
+    }
+
+    pageForRenderer.$relatedQuery = (relationName) => {
+      switch (relationName) {
+        case 'tags':
+          return createStubQuery(_.get(pageContext, 'tags', _.get(pageForRenderer, 'tags', [])))
+        case 'links':
+          return createStubQuery([])
+        default:
+          return createStubQuery([])
+      }
+    }
+
+    pageForRenderer.content = preparedContent
+    pageForRenderer.contentType = normalizedContentType
+    if (frontmatterData) {
+      pageForRenderer.frontmatter = frontmatterData
+      if (!pageForRenderer.title && _.isString(frontmatterData.title)) {
+        pageForRenderer.title = frontmatterData.title
+      }
+      if (!pageForRenderer.description && _.isString(frontmatterData.description)) {
+        pageForRenderer.description = frontmatterData.description
+      }
+      if (!pageForRenderer.tags && (Array.isArray(frontmatterData.tags) || _.isString(frontmatterData.tags))) {
+        pageForRenderer.tags = Array.isArray(frontmatterData.tags) ? frontmatterData.tags : _.split(frontmatterData.tags, ',').map(tag => _.trim(tag)).filter(Boolean)
+      }
+    }
+
+    for (const core of pipeline) {
+      const renderer = require(`../modules/rendering/${_.kebabCase(core.key)}/renderer.js`)
+      const renderResult = await renderer.render.call({
+        config: core.config,
+        children: core.children,
+        page: pageForRenderer,
+        input: pageForRenderer.content
+      })
+      pageForRenderer.content = renderResult
+      pageForRenderer.render = renderResult
+    }
+
+    return pageForRenderer.render || ''
+  }
+
   /**
    * Trigger the rendering of a page
    *
@@ -1000,15 +1627,22 @@ module.exports = class Page extends Model {
           'pages.authorId',
           'pages.creatorId',
           'pages.extra',
+          'pages.approvalStatus',
+          'pages.pendingVersionId',
+          'pages.approvalComment',
+          'pages.approverId',
           {
             authorName: 'author.name',
             authorEmail: 'author.email',
             creatorName: 'creator.name',
-            creatorEmail: 'creator.email'
+            creatorEmail: 'creator.email',
+            approverName: 'approver.name',
+            approverEmail: 'approver.email'
           }
         ])
         .joinRelated('author')
         .joinRelated('creator')
+        .leftJoinRelated('approver')
         .withGraphJoined('tags')
         .modifyGraph('tags', builder => {
           builder.select('tag', 'title')
@@ -1070,7 +1704,8 @@ module.exports = class Page extends Model {
       publishStartDate: page.publishStartDate,
       contentType: page.contentType,
       render: page.render,
-      tags: page.tags.map(t => _.pick(t, ['tag', 'title'])),
+      tags: (page.tags || []).map(t => _.pick(t, ['tag', 'title'])),
+      approvalStatus: page.approvalStatus || 'approved',
       title: page.title,
       toc: _.isString(page.toc) ? page.toc : JSON.stringify(page.toc),
       updatedAt: page.updatedAt
@@ -1120,6 +1755,123 @@ module.exports = class Page extends Model {
    */
   static async flushCache() {
     return fs.emptyDir(path.resolve(WIKI.ROOTPATH, WIKI.config.dataPath, `cache`))
+  }
+
+  static async createFolder({ user, locale, path: folderPath, title }) {
+    const localeCode = _.trim((locale || '').toLowerCase())
+    let cleanPath = _.trim(folderPath || '', '/')
+
+    if (!localeCode || !cleanPath) {
+      throw new Error('Folder locale and path are required.')
+    }
+
+    cleanPath = cleanPath.replace(/\\/g, '/').split('/').filter(Boolean).join('/')
+    if (!cleanPath) {
+      throw new WIKI.Error.PageIllegalPath()
+    }
+
+    if (!WIKI.auth.checkAccess(user, ['manage:pages'], {
+      locale: localeCode,
+      path: cleanPath
+    })) {
+      throw new WIKI.Error.PageUpdateForbidden()
+    }
+
+    const segments = cleanPath.split('/')
+    for (const segment of segments) {
+      if (!segment || segment.includes('.') || segment.includes(' ') || segment.includes('\\') || segment.includes('//')) {
+        throw new WIKI.Error.PageIllegalPath()
+      }
+    }
+
+    const pageConflict = await WIKI.models.pages.query()
+      .where({ localeCode, path: cleanPath })
+      .first()
+    if (pageConflict) {
+      throw new Error('A page already exists at this path.')
+    }
+
+    const folderConflict = await WIKI.models.knex('pageFolders')
+      .where({ localeCode, path: cleanPath })
+      .first()
+    if (folderConflict) {
+      throw new Error('Folder already exists.')
+    }
+
+    const folderTitle = _.trim(title) || _.startCase(_.last(segments))
+    const folderData = {
+      localeCode,
+      path: cleanPath,
+      title: folderTitle
+    }
+
+    let insertedId
+    if (WIKI.config.db.type === 'sqlite') {
+      const resp = await WIKI.models.knex('pageFolders').insert(folderData)
+      insertedId = Array.isArray(resp) ? resp[0] : resp
+    } else {
+      const resp = await WIKI.models.knex('pageFolders').insert(folderData, ['id'])
+      insertedId = Array.isArray(resp) ? _.get(resp, '[0].id', null) : resp
+    }
+
+    await WIKI.models.pages.rebuildTree()
+
+    return WIKI.models.knex('pageFolders')
+      .where({ id: insertedId })
+      .first()
+  }
+
+  static async deleteFolder({ user, locale, path: folderPath }) {
+    const localeCode = _.trim((locale || '').toLowerCase())
+    const cleanPath = _.trim(folderPath || '', '/')
+
+    if (!localeCode || !cleanPath) {
+      throw new Error('Folder locale and path are required.')
+    }
+
+    if (!WIKI.auth.checkAccess(user, ['manage:pages'], {
+      locale: localeCode,
+      path: cleanPath
+    })) {
+      throw new WIKI.Error.PageUpdateForbidden()
+    }
+
+    const folder = await WIKI.models.knex('pageFolders')
+      .where({ localeCode, path: cleanPath })
+      .first()
+    if (!folder) {
+      throw new Error('Folder not found.')
+    }
+
+    const hasPages = await WIKI.models.pages.query()
+      .where('localeCode', localeCode)
+      .andWhere('path', 'like', `${cleanPath}/%`)
+      .first()
+    if (hasPages) {
+      throw new Error('Folder is not empty.')
+    }
+
+    const hasSubFolders = await WIKI.models.knex('pageFolders')
+      .where('localeCode', localeCode)
+      .andWhere('path', 'like', `${cleanPath}/%`)
+      .first()
+    if (hasSubFolders) {
+      throw new Error('Folder contains subfolders.')
+    }
+
+    const removedFolder = {
+      localeCode,
+      path: cleanPath,
+      title: folder.title
+    }
+
+    await WIKI.models.knex('pageFolders')
+      .where({ id: folder.id })
+      .delete()
+
+    await WIKI.models.pages.rebuildTree()
+
+    return removedFolder
   }
 
   /**

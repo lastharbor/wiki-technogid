@@ -368,7 +368,9 @@ module.exports = () => {
     } catch (err) {
       try {
         await WIKI.models.knex('settings').truncate()
-      } catch (err) {}
+      } catch (truncateErr) {
+        WIKI.logger.warn('Failed to truncate settings table during setup error recovery:', truncateErr.message)
+      }
       WIKI.telemetry.sendError(err)
       res.json({ ok: false, error: err.message })
     }
