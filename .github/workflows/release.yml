@@ -81,16 +81,16 @@ jobs:
       - name: Clean unnecessary files
         run: |
           cd release-build
-          
+
           # Удаляем dev зависимости из node_modules (опционально)
           # npm prune --production
-          
+
           # Удаляем ненужные файлы
           find . -name "*.md5" -type f -delete || true
           find . -name "*.map" -type f -delete || true
           find . -name ".DS_Store" -type f -delete || true
           find . -name "Thumbs.db" -type f -delete || true
-          
+
           # Удаляем тестовые файлы (используем -prune для предотвращения ошибок)
           find . -type d -name "__tests__" -prune -exec rm -rf {} \; 2>/dev/null || true
           find . -type d -name "test" -prune -exec rm -rf {} \; 2>/dev/null || true
@@ -114,22 +114,15 @@ jobs:
           cd release-build
           tar -czf ../wiki-js-${{ steps.version.outputs.version }}.tar.gz \
             --exclude='.git' \
-            --exclude='data/wiki.sqlite*' \
-            --exclude='data/cache/*' \
-            --exclude='data/uploads/*' \
-            --exclude='data/repo/*' \
+            --exclude='./data/wiki.sqlite*' \
             .
 
       - name: Create zip archive
         run: |
           cd release-build
-          zip -r -q ../wiki-js-${{ steps.version.outputs.version }}.zip \
-            -x '.git/*' \
-            -x 'data/wiki.sqlite*' \
-            -x 'data/cache/*' \
-            -x 'data/uploads/*' \
-            -x 'data/repo/*' \
-            .
+          zip -r -q ../wiki-js-${{ steps.version.outputs.version }}.zip . \
+            -x '*.git/*' \
+            -x '*data/wiki.sqlite*'
 
       - name: Calculate checksums
         run: |
