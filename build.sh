@@ -33,8 +33,18 @@ fi
 
 # Сборка клиента
 echo "🔨 Building client assets..."
-export NODE_OPTIONS=--openssl-legacy-provider
-npm run build
+
+# Определяем версию Node.js
+NODE_MAJOR_VERSION=$(node -v | cut -d'.' -f1 | sed 's/v//')
+
+# Для Node.js 17+ нужен --openssl-legacy-provider
+if [ "$NODE_MAJOR_VERSION" -ge 17 ]; then
+    echo "   Node.js $NODE_MAJOR_VERSION detected, using legacy OpenSSL provider"
+    npm run build:legacy
+else
+    echo "   Node.js $NODE_MAJOR_VERSION detected, building without legacy provider"
+    npm run build
+fi
 
 echo ""
 echo "✅ Build completed successfully!"
