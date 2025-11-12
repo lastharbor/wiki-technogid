@@ -1,0 +1,45 @@
+#!/bin/bash
+#
+# Wiki.js Build Script
+# Собирает клиентские ассеты
+#
+
+set -e
+
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║                                                                ║"
+echo "║  Wiki.js - Building Client Assets                             ║"
+echo "║                                                                ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Проверка Node.js
+if ! command -v node &> /dev/null; then
+    echo "❌ Node.js is not installed!"
+    echo "   Please install Node.js 14.x or later"
+    exit 1
+fi
+
+NODE_VERSION=$(node -v)
+echo "✅ Node.js version: $NODE_VERSION"
+echo ""
+
+# Установка зависимостей (если нужно)
+if [ ! -d "node_modules" ]; then
+    echo "📦 Installing dependencies..."
+    npm install --legacy-peer-deps
+    echo ""
+fi
+
+# Сборка клиента
+echo "🔨 Building client assets..."
+export NODE_OPTIONS=--openssl-legacy-provider
+npm run build
+
+echo ""
+echo "✅ Build completed successfully!"
+echo ""
+echo "Next step:"
+echo "  ./start.sh    # Start the server"
+echo ""
+

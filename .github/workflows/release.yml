@@ -20,39 +20,35 @@ jobs:
         with:
           fetch-depth: 0  # Полная история для корректного клонирования
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18.x'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: |
-          npm ci --omit=dev --legacy-peer-deps
-          npm install cross-env webpack webpack-cli --legacy-peer-deps
-
-      - name: Build client assets
-        run: npm run build
-        env:
-          NODE_OPTIONS: --openssl-legacy-provider
-
       - name: Prepare release directory
         run: |
           mkdir -p release-build
 
-          # Копируем необходимые файлы
-          cp -r assets release-build/
+          # Копируем исходники (БЕЗ предварительной сборки)
+          cp -r client release-build/
+          cp -r dev release-build/
           cp -r server release-build/
-          cp -r node_modules release-build/
+          cp -r locales release-build/ || true
+          
+          # Копируем конфигурационные файлы
           cp package.json release-build/
-          cp package-lock.json release-build/ || true
+          cp package-lock.json release-build/
           cp config.sample.yml release-build/
+          cp wiki.js release-build/ || true
+          
+          # Копируем скрипты сборки и запуска
+          cp build.sh release-build/
+          cp start.sh release-build/
+          chmod +x release-build/build.sh
+          chmod +x release-build/start.sh
+          
+          # Копируем документацию
           cp LICENSE release-build/
           cp README.md release-build/
           cp CHANGELOG.md release-build/
           cp test-git-nested-folders.md release-build/ || true
 
-          # Создаём пустые директории для data (без содержимого)
+          # Создаём пустые директории для data
           mkdir -p release-build/data/cache
           mkdir -p release-build/data/uploads
           mkdir -p release-build/data/repo
@@ -81,25 +77,81 @@ jobs:
           It will be populated automatically when you run Wiki.js.
           EOF
 
-      - name: Clean unnecessary files
+      - name: Create INSTALL.md
         run: |
+          cat > release-build/INSTALL.md << 'EOF'
+          # Wiki.js v2.6.0 - Installation Guide
+
+          ## Quick Start
+
+          ```bash
+          # 1. Extract archive
+          tar -xzf wiki-js-v2.6.0.tar.gz
+          # or
+          unzip wiki-js-v2.6.0.zip
+
           cd release-build
 
-          # Удаляем dev зависимости из node_modules (опционально)
-          # npm prune --production
+          # 2. Build client assets (one time)
+          ./build.sh
 
-          # Удаляем ненужные файлы
-          find . -name "*.md5" -type f -delete || true
-          find . -name "*.map" -type f -delete || true
-          find . -name ".DS_Store" -type f -delete || true
-          find . -name "Thumbs.db" -type f -delete || true
+          # 3. Configure
+          cp config.sample.yml config.yml
+          nano config.yml  # Edit database settings
 
-          # Удаляем тестовые файлы (используем -prune для предотвращения ошибок)
-          find . -type d -name "__tests__" -prune -exec rm -rf {} \; 2>/dev/null || true
-          find . -type d -name "test" -prune -exec rm -rf {} \; 2>/dev/null || true
-          find . -type d -name "tests" -prune -exec rm -rf {} \; 2>/dev/null || true
-          find . -name "*.test.js" -type f -delete 2>/dev/null || true
-          find . -name "*.spec.js" -type f -delete 2>/dev/null || true
+          # 4. Start server
+          ./start.sh
+          ```
+
+          ## Requirements
+
+          - **Node.js**: 14.x or later (18.x recommended)
+          - **Database**: PostgreSQL, MySQL, MariaDB, SQLite, or MSSQL
+          - **Memory**: 512 MB minimum, 2 GB recommended
+          - **Disk**: 500 MB for application + data storage
+
+          ## First Build
+
+          The first time you run `./build.sh`, it will:
+          - Install all dependencies (~1.8 GB)
+          - Compile client assets (~5-10 minutes)
+          - Create `assets/` and `node_modules/` directories
+
+          ## Scripts
+
+          - `./build.sh` - Build client assets (run once after extraction)
+          - `./start.sh` - Start Wiki.js server
+
+          ## Configuration
+
+          Edit `config.yml` to configure:
+          - Database connection
+          - Server port (default: 3000)
+          - Session secret
+          - Other options
+
+          See Wiki.js documentation for details:
+          https://docs.js.wiki
+
+          ## Troubleshooting
+
+          **Error: "config.yml not found"**
+          - Run: `cp config.sample.yml config.yml`
+          - Edit config.yml with your settings
+
+          **Error: "Client assets not found"**
+          - Run: `./build.sh` first
+
+          **Database connection errors**
+          - Check config.yml database settings
+          - Ensure database server is running
+          - For SQLite: no external database needed
+
+          ## Support
+
+          - GitHub: https://github.com/YOUR_USERNAME/wiki-fork
+          - Documentation: See README.md
+          EOF
 
       - name: Get version from tag
         id: version
@@ -157,22 +209,25 @@ jobs:
           ### Installation
 
           ```bash
-          # Extract archive
+          # 1. Extract archive
           tar -xzf wiki-js-${{ steps.version.outputs.version }}.tar.gz
           # or
           unzip wiki-js-${{ steps.version.outputs.version }}.zip
 
           cd release-build
 
-          # Configure
+          # 2. Build client assets (one time)
+          ./build.sh
+
+          # 3. Configure
           cp config.sample.yml config.yml
           nano config.yml  # Edit database settings
 
-          # Start
-          node server
+          # 4. Start server
+          ./start.sh
           ```
 
-          **No `npm install` needed** - all dependencies included!
+          **First run requires build** - Run `./build.sh` once to compile assets (~5-10 minutes)
 
           ## ✨ Features
 
@@ -209,13 +264,16 @@ jobs:
 
           ## 📊 Package Information
 
-          - **Size:** ~250 MB (tar.gz), ~380 MB (zip)
+          - **Size:** ~15 MB (tar.gz), ~20 MB (zip) - source code only
+          - **After build:** ~250 MB with node_modules and assets
           - **Node.js:** 14.x or later (18.x recommended)
           - **Database:** PostgreSQL, MySQL, MariaDB, SQLite, MSSQL
           - **License:** AGPL-3.0
+          - **Build time:** ~5-10 minutes on first run
 
           ## 📚 Documentation
 
+          - [INSTALL.md](INSTALL.md) - Installation guide
           - [README.md](README.md) - Overview and setup
           - [CHANGELOG.md](CHANGELOG.md) - Full changelog
           - [test-git-nested-folders.md](test-git-nested-folders.md) - Testing guide
