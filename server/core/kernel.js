@@ -31,6 +31,16 @@ module.exports = {
    */
   async preBootMaster() {
     try {
+      // Ensure required data directories exist
+      const fs = require('fs-extra')
+      const path = require('path')
+      const dataPath = path.resolve(WIKI.ROOTPATH, WIKI.config.dataPath || './data')
+
+      WIKI.logger.info('Ensuring data directories exist...')
+      await fs.ensureDir(dataPath)
+      await fs.ensureDir(path.join(dataPath, 'cache'))
+      await fs.ensureDir(path.join(dataPath, 'uploads'))
+
       await this.initTelemetry()
       WIKI.sideloader = await require('./sideloader').init()
       WIKI.cache = require('./cache').init()

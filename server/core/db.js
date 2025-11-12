@@ -119,6 +119,13 @@ module.exports = {
       case 'sqlite':
         dbClient = 'sqlite3'
         dbConfig = { filename: WIKI.config.db.storage }
+
+        // Ensure data directory exists for SQLite
+        const dbDir = path.dirname(WIKI.config.db.storage)
+        if (!fs.existsSync(dbDir)) {
+          WIKI.logger.info(`Creating database directory: ${dbDir}`)
+          fs.mkdirSync(dbDir, { recursive: true })
+        }
         break
       default:
         WIKI.logger.error('Invalid DB Type')
