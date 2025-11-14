@@ -29,19 +29,26 @@ jobs:
           cp -r dev release-build/
           cp -r server release-build/
           cp -r locales release-build/ || true
-          
+
           # Копируем конфигурационные файлы
           cp package.json release-build/
           cp package-lock.json release-build/
           cp config.sample.yml release-build/
           cp wiki.js release-build/ || true
-          
+
+          # Копируем dotfiles (критически важные для сборки)
+          cp .babelrc release-build/
+          cp .npmrc release-build/
+          cp .editorconfig release-build/ || true
+          cp .eslintignore release-build/ || true
+          cp .eslintrc.yml release-build/ || true
+
           # Копируем скрипты сборки и запуска
           cp build.sh release-build/
           cp start.sh release-build/
           chmod +x release-build/build.sh
           chmod +x release-build/start.sh
-          
+
           # Копируем документацию
           cp LICENSE release-build/
           cp README.md release-build/
