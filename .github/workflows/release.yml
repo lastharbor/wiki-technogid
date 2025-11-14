@@ -112,10 +112,33 @@ jobs:
 
           ## Requirements
 
-          - **Node.js**: 14.x or later (18.x recommended)
+          - **Node.js**: 14.x or later (16.x or 18.x recommended)
+          - **Python 3**: Required for native modules (sqlite3)
+          - **Build Tools**: gcc, g++, make (for native module compilation)
           - **Database**: PostgreSQL, MySQL, MariaDB, SQLite, or MSSQL
           - **Memory**: 512 MB minimum, 2 GB recommended
           - **Disk**: 500 MB for application + data storage
+
+          ### System Dependencies
+
+          **ALT Linux:**
+          ```bash
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-module-setuptools python3-module-distutils gcc gcc-c++ make
+          ```
+
+          **Debian/Ubuntu:**
+          ```bash
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-setuptools python3-dev build-essential
+          ```
+
+          **RHEL/CentOS/Fedora:**
+          ```bash
+          sudo dnf install -y python3 python3-setuptools python3-devel gcc gcc-c++ make
+          ```
+
+          **Note:** The `build.sh` script will detect your Linux distribution and attempt to install these dependencies automatically.
 
           ## First Build
 
